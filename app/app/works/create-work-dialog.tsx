@@ -225,12 +225,18 @@ function WorkForm({
         created_by: user.id,
       })
 
-      if (insertError) throw insertError
+      if (insertError) {
+        console.error('[create-work] insert failed:', insertError)
+        throw new Error(
+          `${insertError.message}${insertError.hint ? ` — ${insertError.hint}` : ''}`
+        )
+      }
 
       onOpenChange(false)
       router.refresh()
       router.push(`/app/works/${workId}`)
     } catch (err) {
+      console.error('[create-work] error:', err)
       setError(err instanceof Error ? err.message : 'Something went wrong')
     } finally {
       setSubmitting(false)
