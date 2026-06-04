@@ -59,7 +59,7 @@ export function CreateWorkDialog({
       <DialogContent
         className="bg-neutral-950 border-neutral-800 text-white p-0
                    w-[min(90vw,72rem)] sm:max-w-[min(90vw,72rem)]
-                   h-[80vh] grid-rows-[auto_1fr_auto] gap-0"
+                   h-[90vh] grid-rows-[auto_1fr_auto] gap-0"
       >
         {/* Fresh mount each open → fields reset via useState defaults (no effect). */}
         {open && (
@@ -291,15 +291,21 @@ function WorkForm({
                 selected={dateRange}
                 onSelect={setDateRange}
                 showOutsideDays={false}
-                // Bigger day cells: --cell-size controls the grid; bumping the
-                // day-button font + nav buttons makes the calendar feel large
-                // to match the 80vh modal.
                 className="
                   [--cell-size:--spacing(12)]
                   text-base
                   [&_.rdp-weekday]:text-xs
                   [&_.rdp-month_caption]:text-base
                   [&_.rdp-month_caption]:font-semibold
+
+                  [&_[data-range-start=true]]:bg-lime-400
+                  [&_[data-range-start=true]]:text-black
+                  [&_[data-range-end=true]]:bg-lime-400
+                  [&_[data-range-end=true]]:text-black
+                  [&_[data-range-middle=true]]:bg-lime-900/40
+                  [&_[data-range-middle=true]]:text-lime-200
+                  [&_[data-selected-single=true]]:bg-lime-400
+                  [&_[data-selected-single=true]]:text-black
                 "
               />
             </div>
