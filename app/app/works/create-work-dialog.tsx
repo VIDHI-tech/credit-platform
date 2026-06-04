@@ -2,8 +2,10 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import type { DateRange } from 'react-day-picker'
 import { createClient } from '@/lib/supabase-browser'
 import { Button } from '@/components/ui/button'
+import { Calendar } from '@/components/ui/calendar'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
@@ -20,6 +22,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+
+// YYYY-MM-DD in local time (avoids UTC off-by-one near midnight).
+function toIsoDate(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
 
 interface Member {
   user_id: string
@@ -46,7 +56,11 @@ export function CreateWorkDialog({
 }: Props) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="bg-neutral-950 border-neutral-800 text-white max-w-2xl">
+      <DialogContent
+        className="bg-neutral-950 border-neutral-800 text-white p-0
+                   w-[min(90vw,72rem)] sm:max-w-[min(90vw,72rem)]
+                   h-[80vh] grid-rows-[auto_1fr_auto] gap-0"
+      >
         {/* Fresh mount each open → fields reset via useState defaults (no effect). */}
         {open && (
           <WorkForm
@@ -75,8 +89,7 @@ function WorkForm({
   const [error, setError] = useState<string | null>(null)
 
   // Step 1: schedule (all optional)
-  const [startDate, setStartDate] = useState('')
-  const [endDate, setEndDate] = useState('')
+  const [dateRange, setDateRange] = useState<DateRange | undefined>(undefined)
   const [startTime, setStartTime] = useState('')
   const [endTime, setEndTime] = useState('')
 
@@ -204,8 +217,8 @@ function WorkForm({
         video_type: videoType || null,
         max_credits: maxCredits ? parseFloat(maxCredits) : null,
         instructions_path: instructionsPath,
-        start_date: startDate || null,
-        end_date: endDate || null,
+        start_date: dateRange?.from ? toIsoDate(dateRange.from) : null,
+        end_date: dateRange?.to ? toIsoDate(dateRange.to) : null,
         start_time: startTime || null,
         end_time: endTime || null,
         status: 'ongoing',
@@ -226,12 +239,14 @@ function WorkForm({
 
   return (
     <>
-      <DialogHeader>
+      <DialogHeader className="px-6 pt-6 pb-4 border-b border-neutral-800">
         <DialogTitle>Create Work for {clientName}</DialogTitle>
         <DialogDescription className="text-neutral-400">
           Step {step} of 3
         </DialogDescription>
       </DialogHeader>
+
+      <div className="px-6 py-4 overflow-y-auto min-h-0">
 
       {/* STEPPER */}
       <div className="flex items-center gap-2 mb-2">
@@ -264,44 +279,72 @@ function WorkForm({
       {step === 1 && (
         <div className="space-y-4 py-2">
           <p className="text-sm text-neutral-400">
-            All fields optional — skip if not relevant.
+            All fields optional — skip if not relevant. Pick a start day, then an
+            end day to define the range.
           </p>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label className="text-neutral-300 text-xs">Start date</Label>
-              <Input
-                type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-                className="mt-1 bg-neutral-900 border-neutral-700 text-white"
+
+          <div className="flex flex-col lg:flex-row gap-6">
+            <div className="flex-1 rounded-lg border border-neutral-800 bg-neutral-900/40 p-3 flex justify-center">
+              <Calendar
+                mode="range"
+                numberOfMonths={2}
+                selected={dateRange}
+                onSelect={setDateRange}
+                showOutsideDays={false}
+                // Bigger day cells: --cell-size controls the grid; bumping the
+                // day-button font + nav buttons makes the calendar feel large
+                // to match the 80vh modal.
+                className="
+                  [--cell-size:--spacing(12)]
+                  text-base
+                  [&_.rdp-weekday]:text-xs
+                  [&_.rdp-month_caption]:text-base
+                  [&_.rdp-month_caption]:font-semibold
+                "
               />
             </div>
-            <div>
-              <Label className="text-neutral-300 text-xs">End date</Label>
-              <Input
-                type="date"
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
-                className="mt-1 bg-neutral-900 border-neutral-700 text-white"
-              />
-            </div>
-            <div>
-              <Label className="text-neutral-300 text-xs">Start time</Label>
-              <Input
-                type="time"
-                value={startTime}
-                onChange={(e) => setStartTime(e.target.value)}
-                className="mt-1 bg-neutral-900 border-neutral-700 text-white"
-              />
-            </div>
-            <div>
-              <Label className="text-neutral-300 text-xs">End time</Label>
-              <Input
-                type="time"
-                value={endTime}
-                onChange={(e) => setEndTime(e.target.value)}
-                className="mt-1 bg-neutral-900 border-neutral-700 text-white"
-              />
+
+            <div className="lg:w-56 space-y-4 shrink-0">
+              <div>
+                <Label className="text-neutral-300 text-xs">Start time</Label>
+                <Input
+                  type="time"
+                  value={startTime}
+                  onChange={(e) => setStartTime(e.target.value)}
+                  className="mt-1 bg-neutral-900 border-neutral-700 text-white"
+                />
+              </div>
+              <div>
+                <Label className="text-neutral-300 text-xs">End time</Label>
+                <Input
+                  type="time"
+                  value={endTime}
+                  onChange={(e) => setEndTime(e.target.value)}
+                  className="mt-1 bg-neutral-900 border-neutral-700 text-white"
+                />
+              </div>
+
+              <div className="pt-2 border-t border-neutral-800 text-xs text-neutral-500 space-y-1">
+                <div>
+                  <span className="text-neutral-400">Start:</span>{' '}
+                  {dateRange?.from
+                    ? dateRange.from.toLocaleDateString()
+                    : '—'}
+                </div>
+                <div>
+                  <span className="text-neutral-400">End:</span>{' '}
+                  {dateRange?.to ? dateRange.to.toLocaleDateString() : '—'}
+                </div>
+                {dateRange && (
+                  <button
+                    type="button"
+                    onClick={() => setDateRange(undefined)}
+                    className="text-lime-400 hover:underline mt-1"
+                  >
+                    Clear range
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -444,13 +487,15 @@ function WorkForm({
       )}
 
       {error && (
-        <div className="bg-red-950/50 border border-red-800 text-red-300 px-3 py-2 rounded text-sm">
+        <div className="bg-red-950/50 border border-red-800 text-red-300 px-3 py-2 rounded text-sm mt-4">
           {error}
         </div>
       )}
 
+      </div>
+
       {/* FOOTER NAVIGATION */}
-      <div className="flex justify-between gap-3 pt-2 border-t border-neutral-800">
+      <div className="flex justify-between gap-3 px-6 py-4 border-t border-neutral-800">
         <Button
           variant="outline"
           onClick={() => (step > 1 ? setStep(step - 1) : onOpenChange(false))}
