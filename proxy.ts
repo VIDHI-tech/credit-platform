@@ -1,8 +1,9 @@
-// middleware.ts — refreshes the auth session on every request so cookies stay valid.
+// proxy.ts — refreshes the auth session on every request so cookies stay valid.
+// (Renamed from middleware.ts in Next.js 16; identical semantics.)
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request })
 
   const supabase = createServerClient(
