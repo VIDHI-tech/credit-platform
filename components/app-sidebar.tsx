@@ -1,10 +1,30 @@
 'use client'
 
+import { useState } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { Atom, LayoutDashboard, RefreshCw, Users, LogOut } from 'lucide-react'
+import {
+  Atom,
+  LayoutDashboard,
+  Building2,
+  RefreshCw,
+  Users,
+  LogOut,
+} from 'lucide-react'
 
 import { createClient } from '@/lib/supabase-browser'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
+import { Button } from '@/components/ui/button'
 import {
   Sidebar,
   SidebarContent,
@@ -30,9 +50,11 @@ export function AppSidebar({
 }) {
   const pathname = usePathname()
   const router = useRouter()
+  const [signingOut, setSigningOut] = useState(false)
 
   const nav = [
     { title: 'Dashboard', href: '/app/dashboard', icon: LayoutDashboard },
+    { title: 'Clients', href: '/app/clients', icon: Building2 },
     { title: 'Sync & Assign', href: '/app/sync', icon: RefreshCw },
   ]
   if (role === 'master') {
@@ -40,6 +62,7 @@ export function AppSidebar({
   }
 
   async function handleLogout() {
+    setSigningOut(true)
     const supabase = createClient()
     await supabase.auth.signOut()
     router.push('/')
@@ -86,24 +109,49 @@ export function AppSidebar({
       </SidebarContent>
 
       <SidebarFooter>
-        <div className="px-2 py-1.5">
-          <div className="text-sm font-medium text-white truncate">
-            {fullName}
+        <div className="flex items-center justify-between gap-2 px-2 py-1.5">
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-medium text-white truncate">
+              {fullName}
+            </div>
+            <div className="text-xs text-neutral-500 capitalize">{role}</div>
           </div>
-          <div className="text-xs text-neutral-500 capitalize">{role}</div>
-        </div>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              onClick={handleLogout}
-              tooltip="Sign out"
-              className="text-neutral-400"
+
+          <AlertDialog>
+            <AlertDialogTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Sign out"
+                  title="Sign out"
+                  className="text-neutral-400 hover:text-white shrink-0"
+                />
+              }
             >
               <LogOut />
-              <span>Sign out</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Sign out of Eigen?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  You&apos;ll be returned to the landing page and need to sign in
+                  again to access {orgName}.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel disabled={signingOut}>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={handleLogout}
+                  disabled={signingOut}
+                  className="bg-lime-400 hover:bg-lime-300 text-black font-semibold"
+                >
+                  {signingOut ? 'Signing out…' : 'Confirm sign out'}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </div>
       </SidebarFooter>
     </Sidebar>
   )

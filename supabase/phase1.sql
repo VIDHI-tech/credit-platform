@@ -7,8 +7,8 @@
 -- ============================================================================
 
 -- ===== STEP 1: Clean up Phase 0 test data (no org_id) =====
-TRUNCATE TABLE generations;
-TRUNCATE TABLE clients;
+-- Single statement + CASCADE because generations has a FK to clients.
+TRUNCATE TABLE generations, clients CASCADE;
 
 -- ===== ENUMS =====
 DO $$ BEGIN

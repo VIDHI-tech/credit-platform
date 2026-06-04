@@ -1,0 +1,69 @@
+'use client'
+
+import { useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { createClient } from '@/lib/supabase-browser'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+} from '@/components/ui/select'
+import {
+  CLIENT_STATUSES,
+  CLIENT_STATUS_LABELS,
+  CLIENT_STATUS_COLORS,
+  type ClientStatus,
+} from '@/lib/client-helpers'
+
+interface Props {
+  clientId: string
+  currentStatus: ClientStatus
+}
+
+export function StatusDropdown({ clientId, currentStatus }: Props) {
+  const router = useRouter()
+  const [status, setStatus] = useState<ClientStatus>(currentStatus)
+  const [busy, setBusy] = useState(false)
+
+  async function handleChange(value: string) {
+    const newStatus = value as ClientStatus
+    setStatus(newStatus)
+    setBusy(true)
+
+    const supabase = createClient()
+    const { error } = await supabase
+      .from('clients')
+      .update({ status: newStatus })
+      .eq('id', clientId)
+
+    if (error) {
+      console.error('Status update failed:', error)
+      setStatus(currentStatus) // revert on error
+    } else {
+      router.refresh()
+    }
+    setBusy(false)
+  }
+
+  return (
+    <Select
+      value={status}
+      onValueChange={(v) => handleChange(v as string)}
+      disabled={busy}
+    >
+      <SelectTrigger
+        className={`w-36 h-8 text-xs border ${CLIENT_STATUS_COLORS[status]}`}
+      >
+        {CLIENT_STATUS_LABELS[status]}
+      </SelectTrigger>
+      <SelectContent>
+        {CLIENT_STATUSES.map((s) => (
+          <SelectItem key={s} value={s} className="text-xs">
+            {CLIENT_STATUS_LABELS[s]}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  )
+}
