@@ -7,19 +7,20 @@ export default async function UsersPage() {
   const membership = await requireRole(['master'])
   const supabase = await createClient()
 
-  const { data: pending } = await supabase
-    .from('memberships')
-    .select('id, user_id, full_name, requested_at')
-    .eq('org_id', membership.org_id)
-    .eq('status', 'pending')
-    .order('requested_at', { ascending: false })
-
-  const { data: active } = await supabase
-    .from('memberships')
-    .select('id, user_id, full_name, role, approved_at')
-    .eq('org_id', membership.org_id)
-    .eq('status', 'active')
-    .order('approved_at', { ascending: true })
+  const [{ data: pending }, { data: active }] = await Promise.all([
+    supabase
+      .from('memberships')
+      .select('id, user_id, full_name, requested_at')
+      .eq('org_id', membership.org_id)
+      .eq('status', 'pending')
+      .order('requested_at', { ascending: false }),
+    supabase
+      .from('memberships')
+      .select('id, user_id, full_name, role, approved_at')
+      .eq('org_id', membership.org_id)
+      .eq('status', 'active')
+      .order('approved_at', { ascending: true }),
+  ])
 
   return (
     <div className="p-6 space-y-8 text-neutral-100">

@@ -19,15 +19,14 @@ export default async function ClientsPage({ searchParams }: PageProps) {
   const supabase = await createClient()
   const { status: filterStatus } = await searchParams
 
-  // RLS scopes to the user's org.
-  const { data: clients } = await supabase
-    .from('clients')
-    .select('id, name, industry, status')
-
-  const { data: creditRows } = await supabase
-    .from('generations')
-    .select('client_id, credits')
-    .not('client_id', 'is', null)
+  // RLS scopes to the user's org. Run both queries in parallel — saves one RTT.
+  const [{ data: clients }, { data: creditRows }] = await Promise.all([
+    supabase.from('clients').select('id, name, industry, status'),
+    supabase
+      .from('generations')
+      .select('client_id, credits')
+      .not('client_id', 'is', null),
+  ])
 
   // client_id → { credits, count }
   const creditMap = new Map<string, { credits: number; count: number }>()

@@ -1,5 +1,6 @@
 // lib/auth-helpers.ts
 // Server-side helpers: identity, active membership, and role guards.
+import { cache } from 'react'
 import { createClient } from './supabase-server'
 import { redirect } from 'next/navigation'
 
@@ -40,8 +41,12 @@ export async function requireUser() {
 /**
  * Get the user's active membership (most recent if multiple).
  * Redirects to /onboarding if none, /onboarding/pending if only pending.
+ *
+ * Wrapped in React's `cache()` so layout + page calling this in the same
+ * request share one Supabase round trip instead of doing two.
  */
-export async function requireActiveMembership(): Promise<ActiveMembership> {
+export const requireActiveMembership = cache(
+  async (): Promise<ActiveMembership> => {
   const supabase = await createClient()
   const {
     data: { user },
@@ -78,7 +83,7 @@ export async function requireActiveMembership(): Promise<ActiveMembership> {
 
   if (pending) redirect('/onboarding/pending')
   redirect('/onboarding')
-}
+})
 
 /** Require a specific role or redirect to the dashboard. */
 export async function requireRole(allowed: Role[]) {
