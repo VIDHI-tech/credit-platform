@@ -1,15 +1,10 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
-import {
-  Atom,
-  LayoutDashboard,
-  Users,
-  ChartColumn,
-  Settings,
-} from 'lucide-react'
+import { usePathname, useRouter } from 'next/navigation'
+import { Atom, LayoutDashboard, RefreshCw, Users, LogOut } from 'lucide-react'
 
+import { createClient } from '@/lib/supabase-browser'
 import {
   Sidebar,
   SidebarContent,
@@ -18,21 +13,38 @@ import {
   SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
-  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
 } from '@/components/ui/sidebar'
 
-const mainNav = [{ title: 'Dashboard', href: '/dashboard', icon: LayoutDashboard }]
+type Role = 'master' | 'manager' | 'creator'
 
-const soonNav = [
-  { title: 'Clients', icon: Users },
-  { title: 'Reports', icon: ChartColumn },
-  { title: 'Settings', icon: Settings },
-]
-
-export function AppSidebar() {
+export function AppSidebar({
+  orgName,
+  role,
+  fullName,
+}: {
+  orgName: string
+  role: Role
+  fullName: string
+}) {
   const pathname = usePathname()
+  const router = useRouter()
+
+  const nav = [
+    { title: 'Dashboard', href: '/app/dashboard', icon: LayoutDashboard },
+    { title: 'Sync & Assign', href: '/app/sync', icon: RefreshCw },
+  ]
+  if (role === 'master') {
+    nav.push({ title: 'Users', href: '/app/users', icon: Users })
+  }
+
+  async function handleLogout() {
+    const supabase = createClient()
+    await supabase.auth.signOut()
+    router.push('/')
+    router.refresh()
+  }
 
   return (
     <Sidebar>
@@ -43,7 +55,9 @@ export function AppSidebar() {
           </div>
           <div className="leading-tight">
             <div className="font-semibold text-white">Eigen</div>
-            <div className="text-xs text-neutral-500">Credit attribution</div>
+            <div className="text-xs text-neutral-500 truncate max-w-[150px]">
+              {orgName}
+            </div>
           </div>
         </div>
       </SidebarHeader>
@@ -52,10 +66,13 @@ export function AppSidebar() {
         <SidebarGroup>
           <SidebarGroupLabel>Platform</SidebarGroupLabel>
           <SidebarMenu>
-            {mainNav.map((item) => (
-              <SidebarMenuItem key={item.title}>
+            {nav.map((item) => (
+              <SidebarMenuItem key={item.href}>
                 <SidebarMenuButton
-                  isActive={pathname.startsWith(item.href)}
+                  isActive={
+                    pathname === item.href ||
+                    pathname.startsWith(item.href + '/')
+                  }
                   tooltip={item.title}
                   render={<Link href={item.href} />}
                 >
@@ -66,34 +83,27 @@ export function AppSidebar() {
             ))}
           </SidebarMenu>
         </SidebarGroup>
-
-        <SidebarGroup>
-          <SidebarGroupLabel>Coming soon</SidebarGroupLabel>
-          <SidebarMenu>
-            {soonNav.map((item) => (
-              <SidebarMenuItem key={item.title}>
-                <SidebarMenuButton
-                  disabled
-                  tooltip={item.title}
-                  className="opacity-50"
-                >
-                  <item.icon />
-                  <span>{item.title}</span>
-                </SidebarMenuButton>
-                <SidebarMenuBadge className="text-neutral-600">
-                  soon
-                </SidebarMenuBadge>
-              </SidebarMenuItem>
-            ))}
-          </SidebarMenu>
-        </SidebarGroup>
       </SidebarContent>
 
       <SidebarFooter>
-        <div className="flex items-center gap-2 px-2 py-1.5 text-xs text-neutral-500">
-          <span className="size-2 rounded-full bg-lime-400" />
-          Higgsfield CLI · connected
+        <div className="px-2 py-1.5">
+          <div className="text-sm font-medium text-white truncate">
+            {fullName}
+          </div>
+          <div className="text-xs text-neutral-500 capitalize">{role}</div>
         </div>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              onClick={handleLogout}
+              tooltip="Sign out"
+              className="text-neutral-400"
+            >
+              <LogOut />
+              <span>Sign out</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
       </SidebarFooter>
     </Sidebar>
   )
