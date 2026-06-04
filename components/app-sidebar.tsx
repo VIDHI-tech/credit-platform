@@ -7,6 +7,7 @@ import {
   Atom,
   LayoutDashboard,
   Building2,
+  ClipboardList,
   RefreshCw,
   Users,
   LogOut,
@@ -55,6 +56,7 @@ export function AppSidebar({
   const nav = [
     { title: 'Dashboard', href: '/app/dashboard', icon: LayoutDashboard },
     { title: 'Clients', href: '/app/clients', icon: Building2 },
+    { title: 'Works', href: '/app/works', icon: ClipboardList },
     { title: 'Sync & Assign', href: '/app/sync', icon: RefreshCw },
   ]
   if (role === 'master') {

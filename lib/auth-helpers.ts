@@ -12,6 +12,7 @@ export interface ActiveMembership {
   org_name: string
   role: Role
   full_name: string
+  user_id: string
 }
 
 // A foreign-table select can come back as an object or a single-element array
@@ -63,6 +64,7 @@ export async function requireActiveMembership(): Promise<ActiveMembership> {
       org_name: extractOrgName(active.organizations),
       role: active.role as Role,
       full_name: active.full_name,
+      user_id: user.id,
     }
   }
 

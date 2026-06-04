@@ -1,4 +1,4 @@
-// app/app/clients/[id]/page.tsx — client detail with live credit attribution.
+// app/app/clients/[id]/page.tsx — client detail: credit summary, works, generations.
 import { requireActiveMembership } from '@/lib/auth-helpers'
 import { createClient } from '@/lib/supabase-server'
 import { notFound } from 'next/navigation'
@@ -8,9 +8,15 @@ import {
   CLIENT_STATUS_LABELS,
   type ClientStatus,
 } from '@/lib/client-helpers'
+import {
+  WORK_STATUS_COLORS,
+  WORK_STATUS_LABELS,
+  type WorkStatus,
+} from '@/lib/work-helpers'
 import { StatusDropdown } from './status-dropdown'
 import { EditClientButton } from './edit-client-button'
 import { DeleteClientButton } from './delete-client-button'
+import { CreateWorkButton } from './create-work-button'
 
 interface PageProps {
   params: Promise<{ id: string }>
@@ -23,7 +29,7 @@ export default async function ClientDetailPage({ params }: PageProps) {
 
   const { data: client } = await supabase
     .from('clients')
-    .select('id, name, industry, status, created_at')
+    .select('id, name, industry, status')
     .eq('id', id)
     .maybeSingle()
 
@@ -31,20 +37,57 @@ export default async function ClientDetailPage({ params }: PageProps) {
 
   const { data: generations } = await supabase
     .from('generations')
-    .select(
-      'id, display_name, result_url, media_type, credits, hf_created_at, assigned_at'
-    )
+    .select('id, display_name, result_url, media_type, credits, hf_created_at')
     .eq('client_id', id)
     .order('hf_created_at', { ascending: false })
+
+  const { data: works } = await supabase
+    .from('works')
+    .select('id, title, video_type, status, end_date, max_credits, creator_id')
+    .eq('client_id', id)
+    .order('created_at', { ascending: false })
+
+  const creatorIds = [...new Set((works || []).map((w) => w.creator_id))]
+  const { data: creators } = await supabase
+    .from('memberships')
+    .select('user_id, full_name')
+    .in(
+      'user_id',
+      creatorIds.length > 0
+        ? creatorIds
+        : ['00000000-0000-0000-0000-000000000000']
+    )
+  const creatorNameMap = new Map(
+    (creators || []).map((c) => [c.user_id, c.full_name])
+  )
+
+  const workIds = (works || []).map((w) => w.id)
+  const { data: workCredits } = await supabase
+    .from('generations')
+    .select('work_id, credits')
+    .in(
+      'work_id',
+      workIds.length > 0 ? workIds : ['00000000-0000-0000-0000-000000000000']
+    )
+
+  const creditByWork = new Map<string, number>()
+  ;(workCredits || []).forEach((row) => {
+    if (row.work_id) {
+      creditByWork.set(
+        row.work_id,
+        (creditByWork.get(row.work_id) || 0) + parseFloat(row.credits || '0')
+      )
+    }
+  })
 
   const totalCredits = (generations || []).reduce(
     (sum, g) => sum + parseFloat(g.credits || '0'),
     0
   )
-  const generationCount = generations?.length || 0
   const status = client.status as ClientStatus
   const canEdit = membership.role === 'master' || membership.role === 'manager'
   const canDelete = membership.role === 'master'
+  const canCreateWork = canEdit
 
   return (
     <div className="p-6 max-w-5xl text-neutral-100">
@@ -55,7 +98,6 @@ export default async function ClientDetailPage({ params }: PageProps) {
         ← Back to Clients
       </Link>
 
-      {/* HEADER */}
       <div className="flex items-start justify-between gap-4 mb-2">
         <h1 className="text-3xl font-bold text-white">{client.name}</h1>
         <div className="flex items-center gap-2">
@@ -91,52 +133,112 @@ export default async function ClientDetailPage({ params }: PageProps) {
         <h2 className="text-xs uppercase tracking-wider font-semibold text-neutral-400 mb-4">
           Credit Usage
         </h2>
-        <div className="grid grid-cols-2 gap-6">
+        <div className="grid grid-cols-3 gap-6">
           <div>
             <div className="text-3xl font-bold text-white">
               {totalCredits.toFixed(1)}
             </div>
-            <div className="text-sm text-neutral-500 mt-1">
-              Total credits used
-            </div>
+            <div className="text-sm text-neutral-500 mt-1">Total credits</div>
           </div>
           <div>
             <div className="text-3xl font-bold text-white">
-              {generationCount}
+              {generations?.length || 0}
             </div>
-            <div className="text-sm text-neutral-500 mt-1">
-              Generation{generationCount !== 1 ? 's' : ''} assigned
+            <div className="text-sm text-neutral-500 mt-1">Generations</div>
+          </div>
+          <div>
+            <div className="text-3xl font-bold text-white">
+              {works?.length || 0}
             </div>
+            <div className="text-sm text-neutral-500 mt-1">Works</div>
           </div>
         </div>
       </section>
 
-      {/* GENERATIONS LIST */}
+      {/* WORKS */}
       <section className="bg-neutral-950 border border-neutral-800 rounded-lg overflow-hidden mb-6">
         <div className="px-4 py-3 border-b border-neutral-800 flex items-center justify-between">
-          <h2 className="font-semibold text-white">Assigned Generations</h2>
-          <span className="text-xs text-neutral-500">{generationCount} total</span>
+          <h2 className="font-semibold text-white">Works</h2>
+          {canCreateWork && (
+            <CreateWorkButton clientId={client.id} clientName={client.name} />
+          )}
         </div>
-
-        {generationCount === 0 ? (
+        {!works || works.length === 0 ? (
           <div className="p-8 text-center text-neutral-500">
-            <p>No generations assigned to this client yet.</p>
-            <p className="text-sm mt-1">
-              Go to{' '}
-              <Link href="/app/sync" className="text-lime-400 hover:underline">
-                Sync &amp; Assign
-              </Link>{' '}
-              to attribute generations.
-            </p>
+            <p>No works yet for this client.</p>
+            {canCreateWork && (
+              <p className="text-sm mt-1">
+                Use + Create Work above to add one.
+              </p>
+            )}
           </div>
         ) : (
           <div className="divide-y divide-neutral-800">
-            {generations!.map((g) => (
-              <div key={g.id} className="px-4 py-3 flex items-center gap-3">
+            {works.map((w) => (
+              <Link
+                key={w.id}
+                href={`/app/works/${w.id}`}
+                className="block px-4 py-3 hover:bg-neutral-900/60 transition-colors"
+              >
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="font-medium text-white">
+                        {w.title || w.video_type || 'Untitled work'}
+                      </span>
+                      <span
+                        className={`text-xs px-2 py-0.5 rounded border ${WORK_STATUS_COLORS[w.status as WorkStatus]}`}
+                      >
+                        {WORK_STATUS_LABELS[w.status as WorkStatus]}
+                      </span>
+                    </div>
+                    <div className="text-xs text-neutral-500">
+                      {w.video_type && <span>{w.video_type} · </span>}
+                      Creator: {creatorNameMap.get(w.creator_id) || 'Unknown'}
+                      {w.end_date && (
+                        <span>
+                          {' '}
+                          · Due {new Date(w.end_date).toLocaleDateString()}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-sm font-bold text-white">
+                      {(creditByWork.get(w.id) || 0).toFixed(1)}
+                      {w.max_credits && (
+                        <span className="text-neutral-500 text-xs">
+                          {' '}
+                          / {w.max_credits}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-xs text-neutral-500">credits</div>
+                  </div>
+                </div>
+              </Link>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* ALL GENERATIONS */}
+      <section className="bg-neutral-950 border border-neutral-800 rounded-lg overflow-hidden mb-6">
+        <div className="px-4 py-3 border-b border-neutral-800">
+          <h2 className="font-semibold text-white">All Generations</h2>
+        </div>
+        {!generations || generations.length === 0 ? (
+          <div className="p-6 text-center text-neutral-500 text-sm">
+            No generations assigned yet.
+          </div>
+        ) : (
+          <div className="divide-y divide-neutral-800 max-h-96 overflow-auto">
+            {generations.map((g) => (
+              <div key={g.id} className="px-4 py-2 flex items-center gap-3">
                 {g.media_type === 'video' ? (
                   <video
                     src={g.result_url}
-                    className="w-16 h-12 rounded object-cover bg-black shrink-0"
+                    className="w-16 h-12 rounded object-cover bg-black"
                     preload="metadata"
                     muted
                   />
@@ -145,15 +247,15 @@ export default async function ClientDetailPage({ params }: PageProps) {
                   <img
                     src={g.result_url}
                     alt={g.display_name}
-                    className="w-16 h-12 rounded object-cover bg-neutral-800 shrink-0"
+                    className="w-16 h-12 rounded object-cover bg-neutral-800"
                   />
                 )}
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium text-white">
+                  <div className="text-sm font-medium text-white truncate">
                     {g.display_name}
                   </div>
                   <div className="text-xs text-neutral-500">
-                    {new Date(g.hf_created_at).toLocaleString()}
+                    {new Date(g.hf_created_at).toLocaleDateString()}
                   </div>
                 </div>
                 <div className="text-right">
@@ -164,7 +266,6 @@ export default async function ClientDetailPage({ params }: PageProps) {
                       ? parseFloat(g.credits).toFixed(1)
                       : 'free'}
                   </div>
-                  <div className="text-xs text-neutral-600">credits</div>
                 </div>
               </div>
             ))}
@@ -172,26 +273,14 @@ export default async function ClientDetailPage({ params }: PageProps) {
         )}
       </section>
 
-      {/* WORKS PLACEHOLDER */}
-      <section className="bg-neutral-950 border border-neutral-800 rounded-lg p-6 mb-6">
-        <h2 className="text-xs uppercase tracking-wider font-semibold text-neutral-400 mb-2">
-          Works
-        </h2>
-        <p className="text-neutral-500 text-sm">
-          Coming in Phase 3 — multi-step work creation with creator assignment,
-          video type, deadlines, and lifecycle.
-        </p>
-      </section>
-
-      {/* DELETE (master only) */}
       {canDelete && (
         <section className="bg-red-950/30 border border-red-900 rounded-lg p-6">
           <h2 className="text-xs uppercase tracking-wider font-semibold text-red-400 mb-2">
             Danger zone
           </h2>
           <p className="text-neutral-400 text-sm mb-3">
-            Deleting this client also unassigns all its generations (sets
-            client_id to NULL — they go back to unassigned).
+            Deleting this client also deletes all its works and unassigns its
+            generations.
           </p>
           <DeleteClientButton clientId={client.id} clientName={client.name} />
         </section>

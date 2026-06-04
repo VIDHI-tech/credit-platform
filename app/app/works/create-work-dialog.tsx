@@ -1,0 +1,488 @@
+'use client'
+
+import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
+import { createClient } from '@/lib/supabase-browser'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from '@/components/ui/dialog'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+
+interface Member {
+  user_id: string
+  full_name: string
+  role: string
+}
+interface VideoType {
+  id: string
+  name: string
+}
+
+interface Props {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  clientId: string
+  clientName: string
+}
+
+export function CreateWorkDialog({
+  open,
+  onOpenChange,
+  clientId,
+  clientName,
+}: Props) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="bg-neutral-950 border-neutral-800 text-white max-w-2xl">
+        {/* Fresh mount each open → fields reset via useState defaults (no effect). */}
+        {open && (
+          <WorkForm
+            clientId={clientId}
+            clientName={clientName}
+            onOpenChange={onOpenChange}
+          />
+        )}
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function WorkForm({
+  clientId,
+  clientName,
+  onOpenChange,
+}: {
+  clientId: string
+  clientName: string
+  onOpenChange: (open: boolean) => void
+}) {
+  const router = useRouter()
+  const [step, setStep] = useState(1)
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  // Step 1: schedule (all optional)
+  const [startDate, setStartDate] = useState('')
+  const [endDate, setEndDate] = useState('')
+  const [startTime, setStartTime] = useState('')
+  const [endTime, setEndTime] = useState('')
+
+  // Step 2: basic info
+  const [members, setMembers] = useState<Member[]>([])
+  const [creatorId, setCreatorId] = useState('')
+  const [videoTypes, setVideoTypes] = useState<VideoType[]>([])
+  const [videoType, setVideoType] = useState('')
+  const [addingType, setAddingType] = useState(false)
+  const [newTypeName, setNewTypeName] = useState('')
+  const [maxCredits, setMaxCredits] = useState('')
+  const [title, setTitle] = useState('')
+
+  // Step 3: instructions file
+  const [instructionsFile, setInstructionsFile] = useState<File | null>(null)
+
+  // Load org members + video types on mount (state set after await — allowed).
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      const supabase = createClient()
+      const [{ data: m }, { data: vt }] = await Promise.all([
+        supabase
+          .from('memberships')
+          .select('user_id, full_name, role')
+          .eq('status', 'active'),
+        supabase.from('video_types').select('id, name').order('name'),
+      ])
+      if (!cancelled) {
+        setMembers(m || [])
+        setVideoTypes(vt || [])
+      }
+    }
+    load()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  async function handleAddType() {
+    if (!newTypeName.trim()) return
+    const supabase = createClient()
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    if (!user) return
+    const { data: membership } = await supabase
+      .from('memberships')
+      .select('org_id')
+      .eq('user_id', user.id)
+      .eq('status', 'active')
+      .limit(1)
+      .maybeSingle()
+    if (!membership) return
+
+    const { data, error } = await supabase
+      .from('video_types')
+      .insert({
+        org_id: membership.org_id,
+        name: newTypeName.trim(),
+        created_by: user.id,
+      })
+      .select('id, name')
+      .single()
+
+    if (error) {
+      setError(error.message.includes('duplicate') ? 'Type already exists' : error.message)
+      return
+    }
+    if (data) {
+      setVideoTypes((prev) =>
+        [...prev, data].sort((a, b) => a.name.localeCompare(b.name))
+      )
+      setVideoType(data.name)
+      setAddingType(false)
+      setNewTypeName('')
+      setError(null)
+    }
+  }
+
+  async function handleSubmit() {
+    if (!creatorId) {
+      setError('Creator is required')
+      setStep(2)
+      return
+    }
+    setSubmitting(true)
+    setError(null)
+
+    try {
+      const supabase = createClient()
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      if (!user) throw new Error('Not authenticated')
+
+      const { data: membership } = await supabase
+        .from('memberships')
+        .select('org_id')
+        .eq('user_id', user.id)
+        .eq('status', 'active')
+        .limit(1)
+        .maybeSingle()
+      if (!membership) throw new Error('No active organization')
+
+      // Generate work ID client-side so storage path can use it before insert.
+      const workId = crypto.randomUUID()
+
+      let instructionsPath: string | null = null
+      if (instructionsFile) {
+        const filename = `instructions${instructionsFile.name.endsWith('.md') ? '.md' : '.txt'}`
+        instructionsPath = `${membership.org_id}/${workId}/${filename}`
+        const { error: uploadError } = await supabase.storage
+          .from('work-instructions')
+          .upload(instructionsPath, instructionsFile)
+        if (uploadError) throw new Error(`Upload failed: ${uploadError.message}`)
+      }
+
+      const { error: insertError } = await supabase.from('works').insert({
+        id: workId,
+        org_id: membership.org_id,
+        client_id: clientId,
+        creator_id: creatorId,
+        title: title.trim() || null,
+        video_type: videoType || null,
+        max_credits: maxCredits ? parseFloat(maxCredits) : null,
+        instructions_path: instructionsPath,
+        start_date: startDate || null,
+        end_date: endDate || null,
+        start_time: startTime || null,
+        end_time: endTime || null,
+        status: 'ongoing',
+        created_by: user.id,
+      })
+
+      if (insertError) throw insertError
+
+      onOpenChange(false)
+      router.refresh()
+      router.push(`/app/works/${workId}`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Something went wrong')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle>Create Work for {clientName}</DialogTitle>
+        <DialogDescription className="text-neutral-400">
+          Step {step} of 3
+        </DialogDescription>
+      </DialogHeader>
+
+      {/* STEPPER */}
+      <div className="flex items-center gap-2 mb-2">
+        {[1, 2, 3].map((s) => (
+          <div key={s} className="flex items-center flex-1">
+            <div
+              className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-medium ${
+                s === step
+                  ? 'bg-lime-400 text-black'
+                  : s < step
+                    ? 'bg-lime-900 text-lime-300'
+                    : 'bg-neutral-800 text-neutral-500'
+              }`}
+            >
+              {s}
+            </div>
+            <div className="ml-2 text-xs text-neutral-400">
+              {s === 1 ? 'Schedule' : s === 2 ? 'Basic Info' : 'Instructions'}
+            </div>
+            {s < 3 && (
+              <div
+                className={`flex-1 h-px mx-2 ${s < step ? 'bg-lime-900' : 'bg-neutral-800'}`}
+              />
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* STEP 1: SCHEDULE */}
+      {step === 1 && (
+        <div className="space-y-4 py-2">
+          <p className="text-sm text-neutral-400">
+            All fields optional — skip if not relevant.
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label className="text-neutral-300 text-xs">Start date</Label>
+              <Input
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="mt-1 bg-neutral-900 border-neutral-700 text-white"
+              />
+            </div>
+            <div>
+              <Label className="text-neutral-300 text-xs">End date</Label>
+              <Input
+                type="date"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                className="mt-1 bg-neutral-900 border-neutral-700 text-white"
+              />
+            </div>
+            <div>
+              <Label className="text-neutral-300 text-xs">Start time</Label>
+              <Input
+                type="time"
+                value={startTime}
+                onChange={(e) => setStartTime(e.target.value)}
+                className="mt-1 bg-neutral-900 border-neutral-700 text-white"
+              />
+            </div>
+            <div>
+              <Label className="text-neutral-300 text-xs">End time</Label>
+              <Input
+                type="time"
+                value={endTime}
+                onChange={(e) => setEndTime(e.target.value)}
+                className="mt-1 bg-neutral-900 border-neutral-700 text-white"
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* STEP 2: BASIC INFO */}
+      {step === 2 && (
+        <div className="space-y-4 py-2">
+          <div>
+            <Label className="text-neutral-300">Title (optional)</Label>
+            <Input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="e.g. Q3 UGC Reel Series"
+              className="mt-1 bg-neutral-900 border-neutral-700 text-white"
+            />
+          </div>
+          <div>
+            <Label className="text-neutral-300">Creator *</Label>
+            <Select
+              value={creatorId}
+              onValueChange={(v) => setCreatorId(v as string)}
+            >
+              <SelectTrigger className="mt-1 bg-neutral-900 border-neutral-700">
+                <SelectValue placeholder="Pick a team member" />
+              </SelectTrigger>
+              <SelectContent>
+                {members.map((m) => (
+                  <SelectItem key={m.user_id} value={m.user_id}>
+                    {m.full_name}{' '}
+                    <span className="text-neutral-500 text-xs capitalize">
+                      · {m.role}
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label className="text-neutral-300">Video Type (optional)</Label>
+            {!addingType ? (
+              <div className="flex gap-2 mt-1">
+                <Select
+                  value={videoType}
+                  onValueChange={(v) => {
+                    const val = v as string
+                    if (val === '__add') setAddingType(true)
+                    else setVideoType(val)
+                  }}
+                >
+                  <SelectTrigger className="bg-neutral-900 border-neutral-700 flex-1">
+                    <SelectValue placeholder="Pick or add..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {videoTypes.map((vt) => (
+                      <SelectItem key={vt.id} value={vt.name}>
+                        {vt.name}
+                      </SelectItem>
+                    ))}
+                    <SelectItem value="__add" className="text-lime-400">
+                      + Add new type
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : (
+              <div className="flex gap-2 mt-1">
+                <Input
+                  value={newTypeName}
+                  onChange={(e) => setNewTypeName(e.target.value)}
+                  placeholder="e.g. UGC, Marketing, Reel"
+                  className="bg-neutral-900 border-neutral-700 text-white flex-1"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      handleAddType()
+                    }
+                  }}
+                />
+                <Button
+                  size="sm"
+                  onClick={handleAddType}
+                  className="bg-lime-400 hover:bg-lime-300 text-black font-semibold"
+                >
+                  Add
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setAddingType(false)
+                    setNewTypeName('')
+                  }}
+                >
+                  Cancel
+                </Button>
+              </div>
+            )}
+          </div>
+          <div>
+            <Label className="text-neutral-300">Max credits (optional)</Label>
+            <Input
+              type="number"
+              step="0.1"
+              value={maxCredits}
+              onChange={(e) => setMaxCredits(e.target.value)}
+              placeholder="e.g. 200"
+              className="mt-1 bg-neutral-900 border-neutral-700 text-white"
+            />
+            <p className="text-xs text-neutral-500 mt-1">
+              Soft limit. Useful for budget tracking; not enforced.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* STEP 3: INSTRUCTIONS */}
+      {step === 3 && (
+        <div className="space-y-4 py-2">
+          <p className="text-sm text-neutral-400">
+            Optional .md or .txt file with creative brief, references, etc. Max
+            5MB.
+          </p>
+          <div>
+            <Label className="text-neutral-300">Instructions file</Label>
+            <Input
+              type="file"
+              accept=".md,.txt"
+              onChange={(e) => setInstructionsFile(e.target.files?.[0] || null)}
+              className="mt-1 bg-neutral-900 border-neutral-700 text-white file:text-neutral-300 file:bg-neutral-700 file:border-0 file:rounded file:px-3 file:py-1 file:mr-3"
+            />
+            {instructionsFile && (
+              <p className="text-xs text-neutral-400 mt-2">
+                Selected: {instructionsFile.name} (
+                {(instructionsFile.size / 1024).toFixed(1)} KB)
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {error && (
+        <div className="bg-red-950/50 border border-red-800 text-red-300 px-3 py-2 rounded text-sm">
+          {error}
+        </div>
+      )}
+
+      {/* FOOTER NAVIGATION */}
+      <div className="flex justify-between gap-3 pt-2 border-t border-neutral-800">
+        <Button
+          variant="outline"
+          onClick={() => (step > 1 ? setStep(step - 1) : onOpenChange(false))}
+          disabled={submitting}
+        >
+          {step === 1 ? 'Cancel' : 'Back'}
+        </Button>
+        {step < 3 ? (
+          <Button
+            onClick={() => {
+              if (step === 2 && !creatorId) {
+                setError('Creator is required')
+                return
+              }
+              setError(null)
+              setStep(step + 1)
+            }}
+            disabled={submitting}
+            className="bg-lime-400 hover:bg-lime-300 text-black font-semibold"
+          >
+            Next
+          </Button>
+        ) : (
+          <Button
+            onClick={handleSubmit}
+            disabled={submitting}
+            className="bg-green-600 hover:bg-green-500 text-white"
+          >
+            {submitting ? 'Creating…' : 'Create Work'}
+          </Button>
+        )}
+      </div>
+    </>
+  )
+}
