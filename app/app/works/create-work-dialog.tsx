@@ -340,12 +340,12 @@ function WorkForm({
                 <div>
                   <span className="text-neutral-400">Start:</span>{' '}
                   {dateRange?.from
-                    ? dateRange.from.toLocaleDateString()
+                    ? dateRange.from.toLocaleDateString('en-US')
                     : '—'}
                 </div>
                 <div>
                   <span className="text-neutral-400">End:</span>{' '}
-                  {dateRange?.to ? dateRange.to.toLocaleDateString() : '—'}
+                  {dateRange?.to ? dateRange.to.toLocaleDateString('en-US') : '—'}
                 </div>
                 {dateRange && (
                   <button
@@ -381,7 +381,14 @@ function WorkForm({
               onValueChange={(v) => setCreatorId(v as string)}
             >
               <SelectTrigger className="mt-1 bg-neutral-900 border-neutral-700">
-                <SelectValue placeholder="Pick a team member" />
+                <SelectValue>
+                  {(v) => {
+                    const val = v as string | null
+                    if (!val) return 'Pick a team member'
+                    const m = members.find((x) => x.user_id === val)
+                    return m ? m.full_name : val
+                  }}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
                 {members.map((m) => (

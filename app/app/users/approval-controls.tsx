@@ -52,7 +52,13 @@ export function ApprovalControls({ membershipId }: { membershipId: string }) {
         onValueChange={(v) => setRole(v as 'manager' | 'creator')}
       >
         <SelectTrigger className="w-28 h-8 text-xs bg-neutral-900 border-neutral-700">
-          <SelectValue />
+          <SelectValue>
+            {(v) => {
+              const val = v as string | null
+              if (!val) return 'Role'
+              return val.charAt(0).toUpperCase() + val.slice(1)
+            }}
+          </SelectValue>
         </SelectTrigger>
         <SelectContent>
           <SelectItem value="creator">Creator</SelectItem>

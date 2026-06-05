@@ -13,6 +13,7 @@ import {
 import { StatusActionButtons } from './status-action-buttons'
 import { AssignTables } from './assign-tables'
 import { InstructionsViewer } from './instructions-viewer'
+import { ScheduleCalendar } from './schedule-calendar'
 
 interface PageProps {
   params: Promise<{ id: string }>
@@ -109,31 +110,13 @@ export default async function WorkDetailPage({ params }: PageProps) {
         )}
       </div>
 
-      {/* META GRID */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6 mb-6">
+      {/* META: Type + Budget (Schedule moved to a calendar below) */}
+      <div className="grid grid-cols-2 gap-4 mt-6 mb-6">
         <div className="bg-neutral-950 border border-neutral-800 rounded-lg p-3">
           <div className="text-xs text-neutral-500 uppercase tracking-wider">
             Type
           </div>
           <div className="text-sm text-white mt-1">{work.video_type || '—'}</div>
-        </div>
-        <div className="bg-neutral-950 border border-neutral-800 rounded-lg p-3">
-          <div className="text-xs text-neutral-500 uppercase tracking-wider">
-            Start
-          </div>
-          <div className="text-sm text-white mt-1">
-            {work.start_date
-              ? new Date(work.start_date).toLocaleDateString()
-              : '—'}
-          </div>
-        </div>
-        <div className="bg-neutral-950 border border-neutral-800 rounded-lg p-3">
-          <div className="text-xs text-neutral-500 uppercase tracking-wider">
-            End
-          </div>
-          <div className="text-sm text-white mt-1">
-            {work.end_date ? new Date(work.end_date).toLocaleDateString() : '—'}
-          </div>
         </div>
         <div className="bg-neutral-950 border border-neutral-800 rounded-lg p-3">
           <div className="text-xs text-neutral-500 uppercase tracking-wider">
@@ -148,6 +131,35 @@ export default async function WorkDetailPage({ params }: PageProps) {
           </div>
         </div>
       </div>
+
+      {/* SCHEDULE (read-only range calendar) */}
+      <section className="bg-neutral-950 border border-neutral-800 rounded-lg overflow-hidden mb-6">
+        <div className="px-4 py-3 border-b border-neutral-800 flex items-center justify-between">
+          <div>
+            <h2 className="font-semibold text-white text-sm">Schedule</h2>
+            <p className="text-xs text-neutral-500 mt-0.5">
+              {work.start_date && work.end_date
+                ? `${new Date(work.start_date).toLocaleDateString('en-US')} → ${new Date(work.end_date).toLocaleDateString('en-US')}`
+                : work.start_date
+                  ? `Starts ${new Date(work.start_date).toLocaleDateString('en-US')}`
+                  : work.end_date
+                    ? `Due ${new Date(work.end_date).toLocaleDateString('en-US')}`
+                    : 'No dates set'}
+            </p>
+          </div>
+          {(work.start_time || work.end_time) && (
+            <div className="text-xs text-neutral-500">
+              {work.start_time && <span>Start {work.start_time}</span>}
+              {work.start_time && work.end_time && ' · '}
+              {work.end_time && <span>End {work.end_time}</span>}
+            </div>
+          )}
+        </div>
+        <ScheduleCalendar
+          startDate={work.start_date}
+          endDate={work.end_date}
+        />
+      </section>
 
       {/* CREDIT PROGRESS (if max set) */}
       {maxCredits !== null && maxCredits > 0 && (

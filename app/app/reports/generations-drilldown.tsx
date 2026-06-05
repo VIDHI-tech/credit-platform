@@ -109,7 +109,13 @@ export function GenerationsDrilldown({
           onValueChange={(v) => updateFilter('clientId', v as string)}
         >
           <SelectTrigger className="w-44 h-8 text-xs bg-neutral-900 border-neutral-700">
-            <SelectValue placeholder="All clients" />
+            <SelectValue>
+              {(v) => {
+                const val = v as string | null
+                if (!val || val === '__all') return 'All clients'
+                return clients.find((c) => c.id === val)?.name ?? 'Unknown'
+              }}
+            </SelectValue>
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="__all">All clients</SelectItem>
@@ -143,7 +149,13 @@ export function GenerationsDrilldown({
           onValueChange={(v) => updateFilter('creatorId', v as string)}
         >
           <SelectTrigger className="w-44 h-8 text-xs bg-neutral-900 border-neutral-700">
-            <SelectValue placeholder="All creators" />
+            <SelectValue>
+              {(v) => {
+                const val = v as string | null
+                if (!val || val === '__all') return 'All creators'
+                return memberships.find((m) => m.user_id === val)?.full_name ?? 'Unknown'
+              }}
+            </SelectValue>
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="__all">All creators</SelectItem>
@@ -199,7 +211,7 @@ export function GenerationsDrilldown({
                   <td className="py-2 px-3 text-neutral-300">{g.client_name}</td>
                   <td className="py-2 px-3 text-neutral-300">{g.creator_name}</td>
                   <td className="py-2 px-3 text-neutral-500 text-xs">
-                    {new Date(g.hf_created_at).toLocaleDateString()}
+                    {new Date(g.hf_created_at).toLocaleDateString('en-US')}
                   </td>
                   <td
                     className={`py-2 px-3 text-right font-bold ${g.credits > 0 ? 'text-orange-400' : 'text-neutral-600'}`}

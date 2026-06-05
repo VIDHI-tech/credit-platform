@@ -55,7 +55,13 @@ export function ClientsHeader({
             onValueChange={(v) => handleFilterChange(v as string)}
           >
             <SelectTrigger className="w-52 bg-neutral-900 border-neutral-700">
-              <SelectValue />
+              <SelectValue>
+                {(v) => {
+                  const val = v as string | null
+                  if (!val || val === 'all') return `All Clients (${totalCount})`
+                  return `${CLIENT_STATUS_LABELS[val as ClientStatus]} (${statusCounts[val as ClientStatus]})`
+                }}
+              </SelectValue>
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Clients ({totalCount})</SelectItem>

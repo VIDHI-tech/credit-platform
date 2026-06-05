@@ -80,7 +80,7 @@ export default async function UsersPage() {
                 </div>
               </div>
               <span className="text-xs text-neutral-500">
-                Joined {new Date(a.approved_at).toLocaleDateString()}
+                Joined {new Date(a.approved_at).toLocaleDateString('en-US')}
               </span>
             </div>
           ))}

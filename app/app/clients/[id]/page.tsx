@@ -198,7 +198,7 @@ export default async function ClientDetailPage({ params }: PageProps) {
                       {w.end_date && (
                         <span>
                           {' '}
-                          · Due {new Date(w.end_date).toLocaleDateString()}
+                          · Due {new Date(w.end_date).toLocaleDateString('en-US')}
                         </span>
                       )}
                     </div>
@@ -255,7 +255,7 @@ export default async function ClientDetailPage({ params }: PageProps) {
                     {g.display_name}
                   </div>
                   <div className="text-xs text-neutral-500">
-                    {new Date(g.hf_created_at).toLocaleDateString()}
+                    {new Date(g.hf_created_at).toLocaleDateString('en-US')}
                   </div>
                 </div>
                 <div className="text-right">

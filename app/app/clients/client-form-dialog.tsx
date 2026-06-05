@@ -200,7 +200,12 @@ function ClientForm({
             disabled={submitting}
           >
             <SelectTrigger className="mt-1 bg-neutral-900 border-neutral-700">
-              <SelectValue />
+              <SelectValue>
+                {(v) => {
+                  const val = v as ClientStatus | null
+                  return val ? CLIENT_STATUS_LABELS[val] : 'Pick a status'
+                }}
+              </SelectValue>
             </SelectTrigger>
             <SelectContent>
               {CLIENT_STATUSES.map((s) => (

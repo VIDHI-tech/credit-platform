@@ -39,7 +39,13 @@ export function ClientPipelineCard({ statusCounts, total }: Props) {
           onValueChange={(v) => setSelected(v as ClientStatus | 'all')}
         >
           <SelectTrigger className="w-40 h-8 text-xs bg-neutral-900 border-neutral-700">
-            <SelectValue />
+            <SelectValue>
+              {(v) => {
+                const val = v as string | null
+                if (!val || val === 'all') return `All (${total})`
+                return `${CLIENT_STATUS_LABELS[val as ClientStatus]} (${statusCounts[val as ClientStatus]})`
+              }}
+            </SelectValue>
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All ({total})</SelectItem>
