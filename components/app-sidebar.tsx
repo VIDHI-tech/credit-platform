@@ -9,6 +9,7 @@ import {
   Building2,
   ClipboardList,
   RefreshCw,
+  BarChart3,
   Users,
   LogOut,
 } from 'lucide-react'
@@ -59,6 +60,9 @@ export function AppSidebar({
     { title: 'Works', href: '/app/works', icon: ClipboardList },
     { title: 'Sync & Assign', href: '/app/sync', icon: RefreshCw },
   ]
+  if (role === 'master' || role === 'manager') {
+    nav.push({ title: 'Reports', href: '/app/reports', icon: BarChart3 })
+  }
   if (role === 'master') {
     nav.push({ title: 'Users', href: '/app/users', icon: Users })
   }

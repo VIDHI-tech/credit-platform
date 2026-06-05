@@ -13,7 +13,11 @@ const ALLOWED: Record<
   { roles: Role[]; from: WorkStatus[]; ownWorkOnly?: boolean }[]
 > = {
   in_review: [
-    { roles: ['creator'], from: ['ongoing', 'rework'], ownWorkOnly: true },
+    {
+      roles: ['creator', 'manager'],
+      from: ['ongoing', 'rework'],
+      ownWorkOnly: true,
+    },
   ],
   paused: [{ roles: ['master', 'manager'], from: ['ongoing', 'rework'] }],
   ongoing: [{ roles: ['master', 'manager'], from: ['paused'] }],
