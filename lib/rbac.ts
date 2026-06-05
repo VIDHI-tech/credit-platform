@@ -108,8 +108,9 @@ export const ACCESS = {
   // ── USERS PAGE ────────────────────────────────────────────────────────────
   users: {
     master:  { view: true,  create: false, edit: true,  delete: true  },
-    manager: { view: false, create: false, edit: false, delete: false },
+    manager: { view: true,  create: false, edit: false, delete: false },
     creator: { view: false, create: false, edit: false, delete: false },
+    //        ^^ manager sees read-only list for work assignment, cannot approve/edit/delete
   },
 
   // approve / reject pending join requests
