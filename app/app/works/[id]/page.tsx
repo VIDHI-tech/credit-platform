@@ -10,10 +10,12 @@ import {
   formatDeadline,
   allowedTransitions,
 } from '@/lib/work-helpers'
+import { can } from '@/lib/rbac'
 import { StatusActionButtons } from './status-action-buttons'
 import { AssignTables } from './assign-tables'
 import { InstructionsViewer } from './instructions-viewer'
 import { ScheduleCalendar } from './schedule-calendar'
+import { WorkActions } from './work-actions'
 
 interface PageProps {
   params: Promise<{ id: string }>
@@ -27,7 +29,7 @@ export default async function WorkDetailPage({ params }: PageProps) {
   const { data: work } = await supabase
     .from('works')
     .select(
-      'id, title, video_type, status, start_date, end_date, start_time, end_time, max_credits, client_id, creator_id, instructions_path, notes'
+      'id, title, video_type, industry, status, start_date, end_date, start_time, end_time, max_credits, client_id, creator_id, instructions_path, notes'
     )
     .eq('id', id)
     .maybeSingle()
@@ -68,6 +70,8 @@ export default async function WorkDetailPage({ params }: PageProps) {
   const isOwnWork = work.creator_id === membership.user_id
   const transitions = allowedTransitions(status, membership.role, isOwnWork)
   const maxCredits = work.max_credits ? parseFloat(work.max_credits) : null
+  const canEdit = can(membership.role as 'master' | 'manager' | 'creator', 'works', 'edit')
+  const canDelete = can(membership.role as 'master' | 'manager' | 'creator', 'works', 'delete')
 
   return (
     <div className="p-6 max-w-6xl text-neutral-100">
@@ -105,9 +109,28 @@ export default async function WorkDetailPage({ params }: PageProps) {
           </p>
         </div>
 
-        {transitions.length > 0 && (
-          <StatusActionButtons workId={work.id} transitions={transitions} />
-        )}
+        <div className="flex items-center gap-2">
+          {transitions.length > 0 && (
+            <StatusActionButtons workId={work.id} transitions={transitions} />
+          )}
+          <WorkActions
+            work={{
+              id: work.id,
+              title: work.title,
+              creator_id: work.creator_id,
+              video_type: work.video_type,
+              industry: (work as any).industry || null,
+              max_credits: work.max_credits ? parseFloat(work.max_credits) : null,
+              start_date: work.start_date,
+              end_date: work.end_date,
+              start_time: work.start_time,
+              end_time: work.end_time,
+              notes: work.notes,
+            }}
+            canEdit={canEdit}
+            canDelete={canDelete}
+          />
+        </div>
       </div>
 
       {/* META: Type + Budget (Schedule moved to a calendar below) */}
