@@ -1,39 +1,62 @@
 // lib/hf-adapter.ts
-// The ONLY file that knows how the Higgsfield CLI works.
-// If the CLI output format changes, edit only this file.
-import { execSync } from 'child_process'
+// The ONLY file that knows Higgsfield's data shape. Now token-based REST
+// (no CLI) against fnf.higgsfield.ai/agents/* — so it works on localhost AND
+// on Vercel. Pass a Bearer access token (from the active hf_connection).
+const API_BASE = 'https://fnf.higgsfield.ai'
 
-// The Next.js server process may not inherit your shell PATH, so the `higgsfield`
-// binary can be "not found". Prepend the common install locations explicitly.
-const CLI_ENV = {
-  ...process.env,
-  PATH: `/usr/local/bin:/opt/homebrew/bin:${process.env.PATH ?? ''}`,
+/** Thrown on HTTP 401 so the caller can refresh the token and retry. */
+export class HFUnauthorizedError extends Error {
+  constructor() {
+    super('Higgsfield token unauthorized')
+    this.name = 'HFUnauthorizedError'
+  }
 }
 
-// --- Types matching the REAL CLI output ---
+async function hfGet<T>(path: string, accessToken: string): Promise<T> {
+  let res: Response
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: 'application/json',
+        'User-Agent': 'hf-cli/1.0',
+      },
+    })
+  } catch {
+    // Retry once on a cold-connection network throw.
+    res = await fetch(`${API_BASE}${path}`, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: 'application/json',
+        'User-Agent': 'hf-cli/1.0',
+      },
+    })
+  }
+  if (res.status === 401) throw new HFUnauthorizedError()
+  if (!res.ok) {
+    throw new Error(`Higgsfield API ${path} → ${res.status} ${res.statusText}`)
+  }
+  return res.json()
+}
 
+// --- Raw shapes from the REST API ---
 interface HFJob {
   id: string
   status: string
   display_name: string
   job_set_type: string
   result_url: string
-  created_at: number // Unix float timestamp
-  params: {
-    prompt?: string
-    [key: string]: unknown
-  }
+  created_at: number // Unix float
+  params: { prompt?: string; [k: string]: unknown }
 }
-
 interface HFTransaction {
   display_name: string
-  credits: number // negative for spend (e.g. -25), positive for grant
-  action: string // "spend" or "grant"
-  created_at: string // ISO string
+  credits: number // negative for spend
+  action: string
+  created_at: string // ISO
 }
 
 // --- Our internal type ---
-
 export interface Generation {
   externalId: string
   displayName: string
@@ -41,8 +64,8 @@ export interface Generation {
   resultUrl: string
   mediaType: 'image' | 'video'
   prompt: string
-  credits: number // always positive (0 for free models like Nano Banana)
-  createdAt: string // ISO string
+  credits: number
+  createdAt: string
 }
 
 function detectMediaType(url: string): 'image' | 'video' {
@@ -50,53 +73,51 @@ function detectMediaType(url: string): 'image' | 'video' {
   return 'image'
 }
 
-function runCLI<T>(command: string): T {
-  try {
-    const output = execSync(command, {
-      encoding: 'utf-8',
-      timeout: 30000, // 30 second timeout
-      env: CLI_ENV,
-    })
-    return JSON.parse(output) as T
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    throw new Error(`CLI command failed: ${command}\n${message}`)
-  }
-}
-
-export function fetchHFGenerations(): Generation[] {
-  // Step 1: Get all generation jobs
-  const jobs = runCLI<HFJob[]>('higgsfield generate list --json')
-
-  // Step 2: Get all credit transactions (spend only)
-  const allTransactions = runCLI<HFTransaction[]>(
-    'higgsfield account transactions --json'
+/**
+ * Fetch completed generations with their matched credit cost.
+ * Matches each job to a spend transaction by display_name + timestamp (5s window).
+ */
+export async function fetchHFGenerations(
+  accessToken: string
+): Promise<Generation[]> {
+  // Jobs (one page of up to 100 recent).
+  const jobsRes = await hfGet<{ items: HFJob[] }>(
+    '/agents/jobs?size=100',
+    accessToken
   )
-  const spendTransactions = allTransactions.filter((t) => t.action === 'spend')
+  const jobs = jobsRes.items || []
 
-  // Step 3: Match each job to its transaction by display_name + timestamp proximity.
-  // Both are created within milliseconds of each other (~40ms observed in real data).
-  // Use a 5-second window to be safe.
+  // Transactions — paginate (cursor) up to 5 pages so credit matching has
+  // enough history for the jobs above.
+  const allTx: HFTransaction[] = []
+  let cursor = 0
+  for (let page = 0; page < 5; page++) {
+    const txRes = await hfGet<{ items: HFTransaction[]; next_cursor?: number }>(
+      `/agents/transactions?size=100&cursor=${cursor}`,
+      accessToken
+    )
+    const items = txRes.items || []
+    allTx.push(...items)
+    if (items.length < 100 || txRes.next_cursor == null) break
+    cursor = txRes.next_cursor
+  }
+  const spendTransactions = allTx.filter((t) => t.action === 'spend')
+
   const MATCH_WINDOW_MS = 5000
-
   const usedTransactionIndices = new Set<number>()
 
-  const generations: Generation[] = jobs
+  return jobs
     .filter((job) => job.status === 'completed')
     .map((job) => {
-      const jobTimeMs = job.created_at * 1000 // Unix float → milliseconds
-
-      // Find the closest matching transaction not yet used
+      const jobTimeMs = job.created_at * 1000
       let bestMatchIndex = -1
       let bestMatchDiff = Infinity
 
       spendTransactions.forEach((tx, index) => {
         if (usedTransactionIndices.has(index)) return
         if (tx.display_name !== job.display_name) return
-
         const txTimeMs = new Date(tx.created_at).getTime()
         const diff = Math.abs(txTimeMs - jobTimeMs)
-
         if (diff < MATCH_WINDOW_MS && diff < bestMatchDiff) {
           bestMatchDiff = diff
           bestMatchIndex = index
@@ -105,9 +126,8 @@ export function fetchHFGenerations(): Generation[] {
 
       let credits = 0
       if (bestMatchIndex !== -1) {
-        const tx = spendTransactions[bestMatchIndex]
-        credits = Math.abs(tx.credits) // -25 → 25, 0 → 0
-        usedTransactionIndices.add(bestMatchIndex) // mark as used
+        credits = Math.abs(spendTransactions[bestMatchIndex].credits)
+        usedTransactionIndices.add(bestMatchIndex)
       }
 
       return {
@@ -121,29 +141,22 @@ export function fetchHFGenerations(): Generation[] {
         createdAt: new Date(job.created_at * 1000).toISOString(),
       }
     })
-
-  return generations
 }
 
-export function fetchHFBalance(): {
+/** Account email + plan + balance — used to label a new connection. */
+export async function fetchHFBalance(accessToken: string): Promise<{
   email: string
   plan: string
   credits: number
-} | null {
-  try {
-    const output = execSync('higgsfield account status', {
-      encoding: 'utf-8',
-      env: CLI_ENV,
-    })
-    // Output format: "email@example.com — plus plan, 789 credits"
-    const match = output.match(/(.+?)\s*—\s*(.+?),\s*([\d.]+)\s*credits/)
-    if (!match) return null
-    return {
-      email: match[1].trim(),
-      plan: match[2].trim(),
-      credits: parseFloat(match[3]),
-    }
-  } catch {
-    return null
+}> {
+  const data = await hfGet<{
+    email: string
+    credits: number
+    subscription_plan_type: string
+  }>('/agents/balance', accessToken)
+  return {
+    email: data.email,
+    plan: data.subscription_plan_type,
+    credits: data.credits,
   }
 }

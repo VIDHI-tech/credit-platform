@@ -11,6 +11,7 @@ import {
   RefreshCw,
   BarChart3,
   Users,
+  Settings,
   LogOut,
 } from 'lucide-react'
 
@@ -65,6 +66,7 @@ export function AppSidebar({
   }
   if (role === 'master') {
     nav.push({ title: 'Users', href: '/app/users', icon: Users })
+    nav.push({ title: 'Settings', href: '/app/settings', icon: Settings })
   }
 
   async function handleLogout() {

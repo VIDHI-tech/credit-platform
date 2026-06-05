@@ -1,9 +1,9 @@
-// app/api/hf-sync/route.ts — runs the HF CLI and upserts into the user's org.
+// app/api/hf-sync/route.ts — sync from the org's ACTIVE Higgsfield connection.
 import { NextResponse } from 'next/server'
 import { fetchHFGenerations } from '@/lib/hf-adapter'
+import { withActiveHFToken, NoHFConnectionError } from '@/lib/hf-connection'
 import { createClient } from '@/lib/supabase-server'
 
-// execSync requires the Node.js runtime; never cache.
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
@@ -17,7 +17,6 @@ export async function POST() {
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
     }
 
-    // Resolve the user's active org.
     const { data: membership } = await supabase
       .from('memberships')
       .select('org_id')
@@ -33,12 +32,17 @@ export async function POST() {
       )
     }
 
-    const generations = fetchHFGenerations()
+    // Pull generations using the active connection's token (auto-refresh on 401).
+    const generations = await withActiveHFToken(
+      supabase,
+      membership.org_id,
+      (token) => fetchHFGenerations(token)
+    )
+
     if (generations.length === 0) {
       return NextResponse.json({ synced: 0, message: 'No generations found' })
     }
 
-    // Stamp org_id; OMIT client_id/assigned_at so re-sync never wipes assignments.
     const rows = generations.map((g) => ({
       org_id: membership.org_id,
       external_id: g.externalId,
@@ -64,6 +68,12 @@ export async function POST() {
       message: `Synced ${generations.length} generations`,
     })
   } catch (err) {
+    if (err instanceof NoHFConnectionError) {
+      return NextResponse.json(
+        { error: 'No Higgsfield account connected. Add one in Settings.' },
+        { status: 409 }
+      )
+    }
     console.error('Sync error:', err)
     let message = err instanceof Error ? err.message : 'Sync failed'
     const cause = (err as { cause?: { code?: string } })?.cause?.code

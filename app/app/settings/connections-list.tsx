@@ -1,0 +1,179 @@
+'use client'
+
+import { useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { createClient } from '@/lib/supabase-browser'
+import { Button } from '@/components/ui/button'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
+import { AddAccountDialog } from './add-account-dialog'
+
+interface ConnectionRow {
+  id: string
+  label: string
+  hf_email: string | null
+  is_active: boolean
+  created_at: string
+}
+
+export function ConnectionsList({
+  orgId,
+  connections,
+}: {
+  orgId: string
+  connections: ConnectionRow[]
+}) {
+  const router = useRouter()
+  const [addOpen, setAddOpen] = useState(false)
+  const [busyId, setBusyId] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  async function setActive(id: string) {
+    setBusyId(id)
+    setError(null)
+    const supabase = createClient()
+    // Deactivate the others first (avoids the one-active-per-org unique index),
+    // then activate the target.
+    const off = await supabase
+      .from('hf_connections')
+      .update({ is_active: false })
+      .eq('org_id', orgId)
+      .neq('id', id)
+    if (off.error) {
+      setError(off.error.message)
+      setBusyId(null)
+      return
+    }
+    const on = await supabase
+      .from('hf_connections')
+      .update({ is_active: true })
+      .eq('id', id)
+    if (on.error) setError(on.error.message)
+    setBusyId(null)
+    router.refresh()
+  }
+
+  async function remove(id: string) {
+    setBusyId(id)
+    setError(null)
+    const supabase = createClient()
+    const { error } = await supabase
+      .from('hf_connections')
+      .delete()
+      .eq('id', id)
+    if (error) setError(error.message)
+    setBusyId(null)
+    router.refresh()
+  }
+
+  return (
+    <div>
+      {connections.length === 0 ? (
+        <div className="p-8 text-center text-neutral-500">
+          <p>No Higgsfield accounts connected yet.</p>
+          <p className="text-sm mt-1">
+            Add one to enable Sync &amp; Assign.
+          </p>
+        </div>
+      ) : (
+        <div className="divide-y divide-neutral-800">
+          {connections.map((c) => (
+            <div
+              key={c.id}
+              className="px-4 py-3 flex items-center justify-between gap-4"
+            >
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="font-medium text-white truncate">
+                    {c.label}
+                  </span>
+                  {c.is_active && (
+                    <span className="text-xs px-2 py-0.5 rounded border bg-lime-900/40 text-lime-300 border-lime-700">
+                      Active
+                    </span>
+                  )}
+                </div>
+                {c.hf_email && (
+                  <div className="text-xs text-neutral-500">{c.hf_email}</div>
+                )}
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {!c.is_active && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={busyId === c.id}
+                    onClick={() => setActive(c.id)}
+                    className="h-8"
+                  >
+                    Set active
+                  </Button>
+                )}
+                <AlertDialog>
+                  <AlertDialogTrigger
+                    render={
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={busyId === c.id}
+                        className="h-8 text-red-400 border-red-900 hover:bg-red-950"
+                      />
+                    }
+                  >
+                    Remove
+                  </AlertDialogTrigger>
+                  <AlertDialogContent className="bg-neutral-950 border-neutral-800">
+                    <AlertDialogHeader>
+                      <AlertDialogTitle className="text-white">
+                        Remove {c.label}?
+                      </AlertDialogTitle>
+                      <AlertDialogDescription className="text-neutral-400">
+                        Sync will stop using this account. Existing synced
+                        generations stay. You can reconnect it later.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      <AlertDialogAction
+                        onClick={() => remove(c.id)}
+                        className="bg-red-700 hover:bg-red-600 text-white"
+                      >
+                        Remove
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {error && (
+        <div className="px-4 py-2 text-sm text-red-400 border-t border-neutral-800">
+          {error}
+        </div>
+      )}
+
+      <div className="px-4 py-3 border-t border-neutral-800">
+        <Button
+          onClick={() => setAddOpen(true)}
+          className="bg-lime-400 hover:bg-lime-300 text-black font-semibold"
+        >
+          + Add Higgsfield account
+        </Button>
+      </div>
+
+      <AddAccountDialog open={addOpen} onOpenChange={setAddOpen} />
+    </div>
+  )
+}
