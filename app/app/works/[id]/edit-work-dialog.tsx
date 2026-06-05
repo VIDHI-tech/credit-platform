@@ -55,6 +55,15 @@ interface Props {
   work: WorkData
 }
 
+// Get today's date in YYYY-MM-DD format (no past dates allowed)
+function getTodayDateString(): string {
+  const today = new Date()
+  const year = today.getFullYear()
+  const month = String(today.getMonth() + 1).padStart(2, '0')
+  const day = String(today.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 export function EditWorkDialog({ open, onOpenChange, work }: Props) {
   const router = useRouter()
   const [submitting, setSubmitting] = useState(false)
@@ -63,7 +72,11 @@ export function EditWorkDialog({ open, onOpenChange, work }: Props) {
   const [title, setTitle] = useState(work.title || '')
   const [creatorId, setCreatorId] = useState(work.creator_id)
   const [videoType, setVideoType] = useState(work.video_type || '')
+  const [addingVideoType, setAddingVideoType] = useState(false)
+  const [newVideoTypeName, setNewVideoTypeName] = useState('')
   const [industry, setIndustry] = useState(work.industry || '')
+  const [addingIndustry, setAddingIndustry] = useState(false)
+  const [newIndustryName, setNewIndustryName] = useState('')
   const [maxCredits, setMaxCredits] = useState(
     work.max_credits !== null ? String(work.max_credits) : ''
   )
@@ -101,6 +114,88 @@ export function EditWorkDialog({ open, onOpenChange, work }: Props) {
       cancelled = true
     }
   }, [open])
+
+  async function handleAddVideoType() {
+    if (!newVideoTypeName.trim()) return
+    const supabase = createClient()
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    if (!user) return
+    const { data: membership } = await supabase
+      .from('memberships')
+      .select('org_id')
+      .eq('user_id', user.id)
+      .eq('status', 'active')
+      .limit(1)
+      .maybeSingle()
+    if (!membership) return
+
+    const { data, error } = await supabase
+      .from('video_types')
+      .insert({
+        org_id: membership.org_id,
+        name: newVideoTypeName.trim(),
+        created_by: user.id,
+      })
+      .select('id, name')
+      .single()
+
+    if (error) {
+      setError(error.message.includes('duplicate') ? 'Type already exists' : error.message)
+      return
+    }
+    if (data) {
+      setVideoTypes((prev) =>
+        [...prev, data].sort((a, b) => a.name.localeCompare(b.name))
+      )
+      setVideoType(data.name)
+      setAddingVideoType(false)
+      setNewVideoTypeName('')
+      setError(null)
+    }
+  }
+
+  async function handleAddIndustry() {
+    if (!newIndustryName.trim()) return
+    const supabase = createClient()
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    if (!user) return
+    const { data: membership } = await supabase
+      .from('memberships')
+      .select('org_id')
+      .eq('user_id', user.id)
+      .eq('status', 'active')
+      .limit(1)
+      .maybeSingle()
+    if (!membership) return
+
+    const { data, error } = await supabase
+      .from('industries')
+      .insert({
+        org_id: membership.org_id,
+        name: newIndustryName.trim(),
+        created_by: user.id,
+      })
+      .select('id, name')
+      .single()
+
+    if (error) {
+      setError(error.message.includes('duplicate') ? 'Industry already exists' : error.message)
+      return
+    }
+    if (data) {
+      setIndustries((prev) =>
+        [...prev, data].sort((a, b) => a.name.localeCompare(b.name))
+      )
+      setIndustry(data.name)
+      setAddingIndustry(false)
+      setNewIndustryName('')
+      setError(null)
+    }
+  }
 
   async function handleSave() {
     setSubmitting(true)
@@ -182,33 +277,115 @@ export function EditWorkDialog({ open, onOpenChange, work }: Props) {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label className="text-neutral-300">Video Type</Label>
-              <Select value={videoType} onValueChange={(v) => setVideoType(v as string)}>
-                <SelectTrigger className="mt-1 bg-neutral-900 border-neutral-700">
-                  <SelectValue placeholder="Select..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {videoTypes.map((vt) => (
-                    <SelectItem key={vt.id} value={vt.name}>
-                      {vt.name}
+              {!addingVideoType ? (
+                <Select value={videoType} onValueChange={(v) => {
+                  const val = v as string
+                  if (val === '__add') setAddingVideoType(true)
+                  else setVideoType(val)
+                }}>
+                  <SelectTrigger className="mt-1 bg-neutral-900 border-neutral-700">
+                    <SelectValue placeholder="Select..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {videoTypes.map((vt) => (
+                      <SelectItem key={vt.id} value={vt.name}>
+                        {vt.name}
+                      </SelectItem>
+                    ))}
+                    <SelectItem value="__add" className="text-lime-400">
+                      + Add new type
                     </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                  </SelectContent>
+                </Select>
+              ) : (
+                <div className="flex gap-2 mt-1">
+                  <Input
+                    value={newVideoTypeName}
+                    onChange={(e) => setNewVideoTypeName(e.target.value)}
+                    placeholder="e.g. Reel, Story"
+                    className="bg-neutral-900 border-neutral-700 text-white flex-1"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        handleAddVideoType()
+                      }
+                    }}
+                  />
+                  <Button
+                    size="sm"
+                    onClick={handleAddVideoType}
+                    className="bg-lime-400 hover:bg-lime-300 text-black font-semibold"
+                  >
+                    Add
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      setAddingVideoType(false)
+                      setNewVideoTypeName('')
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              )}
             </div>
             <div>
               <Label className="text-neutral-300">Industry</Label>
-              <Select value={industry} onValueChange={(v) => setIndustry(v as string)}>
-                <SelectTrigger className="mt-1 bg-neutral-900 border-neutral-700">
-                  <SelectValue placeholder="Select..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {industries.map((ind) => (
-                    <SelectItem key={ind.id} value={ind.name}>
-                      {ind.name}
+              {!addingIndustry ? (
+                <Select value={industry} onValueChange={(v) => {
+                  const val = v as string
+                  if (val === '__add_industry') setAddingIndustry(true)
+                  else setIndustry(val)
+                }}>
+                  <SelectTrigger className="mt-1 bg-neutral-900 border-neutral-700">
+                    <SelectValue placeholder="Select..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {industries.map((ind) => (
+                      <SelectItem key={ind.id} value={ind.name}>
+                        {ind.name}
+                      </SelectItem>
+                    ))}
+                    <SelectItem value="__add_industry" className="text-lime-400">
+                      + Add new industry
                     </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                  </SelectContent>
+                </Select>
+              ) : (
+                <div className="flex gap-2 mt-1">
+                  <Input
+                    value={newIndustryName}
+                    onChange={(e) => setNewIndustryName(e.target.value)}
+                    placeholder="e.g. Food & Beverage"
+                    className="bg-neutral-900 border-neutral-700 text-white flex-1"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        handleAddIndustry()
+                      }
+                    }}
+                  />
+                  <Button
+                    size="sm"
+                    onClick={handleAddIndustry}
+                    className="bg-lime-400 hover:bg-lime-300 text-black font-semibold"
+                  >
+                    Add
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      setAddingIndustry(false)
+                      setNewIndustryName('')
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              )}
             </div>
           </div>
 
@@ -230,6 +407,7 @@ export function EditWorkDialog({ open, onOpenChange, work }: Props) {
                 type="date"
                 value={startDate}
                 onChange={(e) => setStartDate(e.target.value)}
+                min={getTodayDateString()}
                 className="mt-1 bg-neutral-900 border-neutral-700 text-white"
               />
             </div>
@@ -239,6 +417,7 @@ export function EditWorkDialog({ open, onOpenChange, work }: Props) {
                 type="date"
                 value={endDate}
                 onChange={(e) => setEndDate(e.target.value)}
+                min={getTodayDateString()}
                 className="mt-1 bg-neutral-900 border-neutral-700 text-white"
               />
             </div>

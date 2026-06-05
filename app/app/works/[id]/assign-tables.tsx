@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Trash2, Undo2 } from 'lucide-react'
+import { Undo2 } from 'lucide-react'
 
 interface Generation {
   id: string
@@ -17,6 +17,8 @@ interface Generation {
   assigned_at: string | null
   assigned_by: string | null
   is_waste: boolean
+  wasted_at: string | null
+  wasted_by: string | null
 }
 
 interface Props {
@@ -89,7 +91,7 @@ function UnassignButton({
   const isAssigner = assignedBy === userId
 
   useEffect(() => {
-    if (isMasterOrManager) return // always visible
+    if (isMasterOrManager) return
     if (!isAssigner || !assignedAt) return
 
     const assignedTime = new Date(assignedAt).getTime()
@@ -106,7 +108,6 @@ function UnassignButton({
     return () => clearInterval(interval)
   }, [isMasterOrManager, isAssigner, assignedAt])
 
-  // Don't show for creators after 10s or if they didn't assign it
   if (!isMasterOrManager) {
     if (!isAssigner || timeLeft === 0 || timeLeft === null) return null
   }
@@ -133,6 +134,80 @@ function UnassignButton({
   )
 }
 
+function WastageButton({
+  generationId,
+  wastedAt,
+  wastedBy,
+  userRole,
+  userId,
+  onDone,
+}: {
+  generationId: string
+  wastedAt: string | null
+  wastedBy: string | null
+  userRole: string
+  userId: string
+  onDone: () => void
+}) {
+  const [busy, setBusy] = useState(false)
+  const [timeLeft, setTimeLeft] = useState<number | null>(null)
+
+  const isMaster = userRole === 'master'
+  const isWaster = wastedBy === userId
+  const isWasted = wastedAt !== null
+
+  useEffect(() => {
+    if (!isWasted || !wastedAt) return
+    if (!isMaster && !isWaster) return
+
+    const wastedTime = new Date(wastedAt).getTime()
+    function check() {
+      const remaining = 10000 - (Date.now() - wastedTime)
+      if (remaining <= 0) {
+        setTimeLeft(0)
+      } else {
+        setTimeLeft(Math.ceil(remaining / 1000))
+      }
+    }
+    check()
+    const interval = setInterval(check, 1000)
+    return () => clearInterval(interval)
+  }, [isWasted, wastedAt, isMaster, isWaster])
+
+  async function handleToggleWaste() {
+    setBusy(true)
+    const res = await fetch(`/api/generations/${generationId}/waste`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ is_waste: !isWasted }),
+    })
+    setBusy(false)
+    if (res.ok) onDone()
+  }
+
+  if (!isWasted) return null
+
+  // Show useful button if within 10s (for the person who wasted it) or anytime for master
+  const showUsefulButton = (isWaster && timeLeft! > 0) || isMaster
+
+  return (
+    <Button
+      size="sm"
+      variant="outline"
+      onClick={handleToggleWaste}
+      disabled={busy}
+      className="h-6 text-xs px-2 text-lime-400 border-lime-700 hover:bg-lime-950"
+    >
+      {busy ? '…' : (
+        <>
+          <Undo2 className="size-3 mr-1" />
+          {isWaster ? `Mark Useful (${timeLeft}s)` : 'Mark Useful'}
+        </>
+      )}
+    </Button>
+  )
+}
+
 export function AssignTables({
   workId,
   clientId,
@@ -147,10 +222,9 @@ export function AssignTables({
   const [assigning, setAssigning] = useState<string | null>(null)
   const [wasting, setWasting] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [showWasted, setShowWasted] = useState(false)
 
-  // Split unassigned into non-waste and waste
-  const unassigned = allUnassigned.filter((g) => !g.is_waste)
+  // Split unassigned into useful and wasted
+  const useful = allUnassigned.filter((g) => !g.is_waste)
   const wasted = allUnassigned.filter((g) => g.is_waste)
 
   async function handleSync() {
@@ -183,18 +257,18 @@ export function AssignTables({
     router.refresh()
   }
 
-  async function handleWaste(generationId: string, isWaste: boolean) {
+  async function handleMarkWaste(generationId: string) {
     setWasting(generationId)
     setError(null)
     const res = await fetch(`/api/generations/${generationId}/waste`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ is_waste: isWaste }),
+      body: JSON.stringify({ is_waste: true }),
     })
     setWasting(null)
     if (!res.ok) {
       const data = await res.json().catch(() => ({}))
-      setError(`Waste failed: ${data.error || 'unknown'}`)
+      setError(`Failed: ${data.error || 'unknown'}`)
       return
     }
     router.refresh()
@@ -202,7 +276,6 @@ export function AssignTables({
 
   const assignedToThisWork = assignedToClient.filter((g) => g.work_id === workId)
   const assignedElsewhere = assignedToClient.filter((g) => g.work_id !== workId)
-  const isMasterOrManager = userRole === 'master' || userRole === 'manager'
 
   return (
     <div className="space-y-3">
@@ -211,8 +284,8 @@ export function AssignTables({
           {error}
         </div>
       )}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* TABLE A: UNASSIGNED */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* TABLE A: UNASSIGNED (Useful) */}
         <div className="bg-neutral-950 border border-neutral-800 rounded-lg overflow-hidden">
           <div className="px-4 py-3 border-b border-neutral-800 flex items-center justify-between">
             <div>
@@ -220,7 +293,7 @@ export function AssignTables({
                 Unassigned Generations
               </h2>
               <p className="text-xs text-neutral-500">
-                {unassigned.length} pending · across whole org
+                {useful.length} pending · ready to use
               </p>
             </div>
             <Button
@@ -232,7 +305,7 @@ export function AssignTables({
               {syncing ? '…' : '⟳ Sync'}
             </Button>
           </div>
-          {unassigned.length === 0 ? (
+          {useful.length === 0 ? (
             <div className="p-6 text-center text-neutral-500 text-sm">
               <p>No unassigned generations.</p>
               <p className="text-xs mt-1">Click Sync to pull from Higgsfield.</p>
@@ -241,7 +314,7 @@ export function AssignTables({
             <div className="max-h-[500px] overflow-auto">
               <table className="w-full text-xs">
                 <tbody className="divide-y divide-neutral-800">
-                  {unassigned.map((g) => (
+                  {useful.map((g) => (
                     <tr key={g.id} className="hover:bg-neutral-900/60">
                       <td className="px-2 py-2">
                         <MediaPreview
@@ -274,76 +347,21 @@ export function AssignTables({
                           >
                             {assigning === g.id ? '…' : 'Assign'}
                           </Button>
-                          <button
-                            onClick={() => handleWaste(g.id, true)}
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleMarkWaste(g.id)}
                             disabled={wasting === g.id}
-                            className="p-1 rounded text-neutral-500 hover:text-red-400 hover:bg-red-950/50 transition-colors"
-                            title="Mark as waste"
+                            className="h-6 text-xs px-2 text-yellow-400 border-yellow-700 hover:bg-yellow-950"
                           >
-                            <Trash2 className="size-3.5" />
-                          </button>
+                            {wasting === g.id ? '…' : 'Wastage'}
+                          </Button>
                         </div>
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-            </div>
-          )}
-
-          {/* WASTED SECTION (collapsed) */}
-          {wasted.length > 0 && (
-            <div className="border-t border-neutral-800">
-              <button
-                onClick={() => setShowWasted(!showWasted)}
-                className="w-full px-4 py-2 text-xs text-neutral-500 hover:text-neutral-300 flex items-center justify-between"
-              >
-                <span>Wasted ({wasted.length})</span>
-                <span>{showWasted ? '▾' : '▸'}</span>
-              </button>
-              {showWasted && (
-                <div className="max-h-[200px] overflow-auto">
-                  <table className="w-full text-xs">
-                    <tbody className="divide-y divide-neutral-800">
-                      {wasted.map((g) => (
-                        <tr key={g.id} className="bg-red-950/10">
-                          <td className="px-2 py-2">
-                            <MediaPreview
-                              url={g.result_url}
-                              mediaType={g.media_type}
-                              name={g.display_name}
-                            />
-                          </td>
-                          <td className="px-2 py-2">
-                            <div className="font-medium text-neutral-500 line-through">
-                              {g.display_name}
-                            </div>
-                          </td>
-                          <td className="px-2 py-2 text-right">
-                            <span className="font-bold text-neutral-600">
-                              {parseFloat(g.credits) > 0
-                                ? parseFloat(g.credits).toFixed(1)
-                                : 'free'}
-                            </span>
-                          </td>
-                          <td className="px-2 py-2">
-                            {isMasterOrManager && (
-                              <button
-                                onClick={() => handleWaste(g.id, false)}
-                                disabled={wasting === g.id}
-                                className="p-1 rounded text-neutral-500 hover:text-lime-400 hover:bg-lime-950/50 transition-colors"
-                                title="Un-waste"
-                              >
-                                <Undo2 className="size-3.5" />
-                              </button>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
             </div>
           )}
         </div>
@@ -410,6 +428,71 @@ export function AssignTables({
                           generationId={g.id}
                           assignedAt={g.assigned_at}
                           assignedBy={g.assigned_by}
+                          userRole={userRole}
+                          userId={userId}
+                          onDone={() => router.refresh()}
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {/* TABLE C: WASTAGE */}
+        <div className="bg-neutral-950 border border-red-900/50 rounded-lg overflow-hidden">
+          <div className="px-4 py-3 border-b border-neutral-800">
+            <h2 className="font-semibold text-white text-sm flex items-center gap-2">
+              Wastage
+              {wasted.length > 0 && (
+                <Badge variant="outline" className="text-red-400 border-red-700">
+                  {wasted.length}
+                </Badge>
+              )}
+            </h2>
+            <p className="text-xs text-neutral-500 mt-0.5">
+              Marked as not useful
+            </p>
+          </div>
+          {wasted.length === 0 ? (
+            <div className="p-6 text-center text-neutral-500 text-sm">
+              <p>No wastage yet.</p>
+            </div>
+          ) : (
+            <div className="max-h-[500px] overflow-auto">
+              <table className="w-full text-xs">
+                <tbody className="divide-y divide-neutral-800">
+                  {wasted.map((g) => (
+                    <tr key={g.id} className="bg-red-950/10 hover:bg-red-950/20">
+                      <td className="px-2 py-2">
+                        <MediaPreview
+                          url={g.result_url}
+                          mediaType={g.media_type}
+                          name={g.display_name}
+                        />
+                      </td>
+                      <td className="px-2 py-2">
+                        <div className="font-medium text-neutral-400 line-through">
+                          {g.display_name}
+                        </div>
+                        <div className="text-xs text-neutral-600 mt-0.5">
+                          Marked {g.wasted_at ? new Date(g.wasted_at).toLocaleTimeString() : ''}
+                        </div>
+                      </td>
+                      <td className="px-2 py-2 text-right">
+                        <span className="font-bold text-red-400">
+                          {parseFloat(g.credits) > 0
+                            ? parseFloat(g.credits).toFixed(1)
+                            : 'free'}
+                        </span>
+                      </td>
+                      <td className="px-2 py-2">
+                        <WastageButton
+                          generationId={g.id}
+                          wastedAt={g.wasted_at}
+                          wastedBy={g.wasted_by}
                           userRole={userRole}
                           userId={userId}
                           onDone={() => router.refresh()}

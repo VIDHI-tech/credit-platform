@@ -31,6 +31,15 @@ function toIsoDate(d: Date): string {
   return `${y}-${m}-${day}`
 }
 
+// Get today's date in YYYY-MM-DD format (no past dates allowed)
+function getTodayDateString(): string {
+  const today = new Date()
+  const year = today.getFullYear()
+  const month = String(today.getMonth() + 1).padStart(2, '0')
+  const day = String(today.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 interface Member {
   user_id: string
   full_name: string
@@ -387,6 +396,9 @@ function WorkForm({
                   className="mt-1 bg-neutral-900 border-neutral-700 text-white"
                 />
               </div>
+              <p className="text-xs text-neutral-500 col-span-2 mt-1">
+                📅 Start and end dates cannot be in the past
+              </p>
 
               <div className="pt-2 border-t border-neutral-800 text-xs text-neutral-500 space-y-1">
                 <div>
