@@ -62,13 +62,13 @@ export function AppSidebar({
     { title: 'Works', href: '/app/works', icon: ClipboardList },
     { title: 'Sync & Assign', href: '/app/sync', icon: RefreshCw },
   ]
-  if (can(role, 'nav.reports')) {
+  if (can(role, 'reports', 'view')) {
     nav.push({ title: 'Reports', href: '/app/reports', icon: BarChart3 })
   }
-  if (can(role, 'nav.users')) {
+  if (can(role, 'users', 'view')) {
     nav.push({ title: 'Users', href: '/app/users', icon: Users })
   }
-  if (can(role, 'nav.settings')) {
+  if (can(role, 'settings', 'view')) {
     nav.push({ title: 'Settings', href: '/app/settings', icon: Settings })
   }
 
