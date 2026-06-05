@@ -16,6 +16,7 @@ import {
 } from 'lucide-react'
 
 import { createClient } from '@/lib/supabase-browser'
+import { can } from '@/lib/rbac'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -61,11 +62,13 @@ export function AppSidebar({
     { title: 'Works', href: '/app/works', icon: ClipboardList },
     { title: 'Sync & Assign', href: '/app/sync', icon: RefreshCw },
   ]
-  if (role === 'master' || role === 'manager') {
+  if (can(role, 'nav.reports')) {
     nav.push({ title: 'Reports', href: '/app/reports', icon: BarChart3 })
   }
-  if (role === 'master') {
+  if (can(role, 'nav.users')) {
     nav.push({ title: 'Users', href: '/app/users', icon: Users })
+  }
+  if (can(role, 'nav.settings')) {
     nav.push({ title: 'Settings', href: '/app/settings', icon: Settings })
   }
 
