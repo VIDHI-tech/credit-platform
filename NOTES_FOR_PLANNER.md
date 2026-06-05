@@ -158,6 +158,34 @@ All accept a Bearer access token; same data shapes as the CLI returned. Verified
 - "Connection healthchecks" (last-sync-status, balance display): just call `fetchHFBalance(token)` from `/app/settings`.
 - Workspace selection (the `workspace` command in the CLI) — Higgsfield has a per-account billing-workspace concept; could add this to the connection record (`workspace_id`) if needed.
 
+### Update: per-account access for creators + role editing (commit `231db1a` + role-edit follow-up)
+
+The single-active-account model evolved into a **multi-account / per-creator grant** model:
+- `is_active` no longer means "the single one to sync from" — it means "this account is enabled for sync". Multiple can be on at once, and master can toggle Enable/Disable in Settings without revoking creator grants.
+- New table `hf_connection_grants(connection_id, user_id)` controls which creators can sync from which accounts. Master + manager auto-access **all** enabled connections. Creators access only the granted ones.
+- `generations.hf_connection_id` stamps the source account on every row. RLS on `generations` was rewritten to:
+  - SELECT: master/manager see everything in their org; creators see only generations whose `hf_connection_id` they have a grant for.
+  - UPDATE: same. (INSERT unchanged because the sync route already constrains what it inserts.)
+- Sync route fans out across every accessible enabled connection via `forEachAccessibleConnection`, stamps each generation with `hf_connection_id`, and reports per-account errors in the response.
+- `lib/hf-connection.ts` rewritten: the old single-active `withActiveHFToken` is gone; the new `forEachAccessibleConnection(supabase, orgId, userId, role, fn)` returns `ConnectionResult<T>[]` (one item per accessible account, with `connectionId`, `label`, `data`, and optional `error`).
+- UI:
+  - `/app/settings` (master only) — Enable/Disable toggles per account.
+  - `/app/users` (master only) — new **"Higgsfield Account Access"** section with collapsible creator rows; each expands to a list of all org connections with checkboxes (`AccountGrantsManager`). Includes "Grant all" / "Revoke all" shortcuts.
+- Sidebar order is now: Dashboard, Clients, Works, Sync & Assign, Reports, Users, **Settings** (Settings is master-only).
+
+### Role editing for active members + member removal
+
+Active member rows on `/app/users` now have a `MemberControls` widget (`app/app/users/member-controls.tsx`) so master can:
+- **Change role at any time** to master / manager / creator via a dropdown — direct Supabase update, allowed by the existing `Master manages memberships` RLS policy.
+- **Remove an active member** via an AlertDialog confirmation — direct DELETE, allowed by `Master deletes memberships` RLS.
+- **Last-master guard:** if a row is the only `master` in the org, the dropdown shows "Master" but demotion attempts surface an inline error ("Promote another member to master first"), and the Remove button is disabled. Computed in `users/page.tsx` via `masterCount = (active || []).filter(m => m.role === 'master').length`, then passed as `isLastMaster` to `MemberControls`.
+- The row also flags `isYou` (compared to `membership.user_id`) so the confirm dialog warns master if they're about to demote/remove themselves.
+- Approve flow (`approval-controls.tsx`) is unchanged — that handles pending requests only. Active-member editing is `MemberControls`. No new RLS or migration needed.
+
+### Onboarding gotcha worth flagging
+
+If a tester signs in with a Google account that **already has an active membership** in the DB (e.g. they previously created an org with that account and forgot), the landing page short-circuits straight to `/app/dashboard` — no onboarding shown, no role choice. To re-test onboarding for a given email, **delete the membership row** for that user (or the whole org via `DELETE FROM organizations WHERE id = '…'`, which cascades to memberships/clients/etc). Future planning: consider a "leave org" affordance for masters to make this self-service.
+
 ---
 
 ## 8. Things still on the table

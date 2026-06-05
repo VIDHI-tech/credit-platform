@@ -3,6 +3,7 @@ import { requireRole } from '@/lib/auth-helpers'
 import { createClient } from '@/lib/supabase-server'
 import { ApprovalControls } from './approval-controls'
 import { AccountGrantsManager } from './account-grants-manager'
+import { MemberControls } from './member-controls'
 
 export default async function UsersPage() {
   const membership = await requireRole(['master'])
@@ -33,6 +34,7 @@ export default async function UsersPage() {
   ])
 
   const creators = (active || []).filter((m) => m.role === 'creator')
+  const masterCount = (active || []).filter((m) => m.role === 'master').length
 
   return (
     <div className="p-6 space-y-8 text-neutral-100">
@@ -80,22 +82,33 @@ export default async function UsersPage() {
           <span className="text-green-400 text-sm">{active?.length || 0}</span>
         </div>
         <div className="divide-y divide-neutral-800">
-          {active?.map((a) => (
-            <div
-              key={a.id}
-              className="px-4 py-3 flex items-center justify-between"
-            >
-              <div>
-                <div className="font-medium text-white">{a.full_name}</div>
-                <div className="text-xs text-neutral-500 capitalize">
-                  {a.role}
+          {active?.map((a) => {
+            const role = a.role as 'master' | 'manager' | 'creator'
+            const isYou = a.user_id === membership.user_id
+            const isLastMaster = role === 'master' && masterCount <= 1
+            return (
+              <div
+                key={a.id}
+                className="px-4 py-3 flex items-center justify-between gap-4"
+              >
+                <div className="min-w-0">
+                  <div className="font-medium text-white flex items-center gap-2">
+                    {a.full_name}
+                  </div>
+                  <div className="text-xs text-neutral-500">
+                    Joined {new Date(a.approved_at).toLocaleDateString('en-US')}
+                  </div>
                 </div>
+                <MemberControls
+                  membershipId={a.id}
+                  currentRole={role}
+                  fullName={a.full_name}
+                  isYou={isYou}
+                  isLastMaster={isLastMaster}
+                />
               </div>
-              <span className="text-xs text-neutral-500">
-                Joined {new Date(a.approved_at).toLocaleDateString('en-US')}
-              </span>
-            </div>
-          ))}
+            )
+          })}
         </div>
       </section>
 

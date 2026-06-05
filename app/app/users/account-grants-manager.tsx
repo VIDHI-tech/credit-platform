@@ -159,8 +159,12 @@ export function AccountGrantsManager({
 
   if (creators.length === 0) {
     return (
-      <div className="p-6 text-center text-neutral-500 text-sm">
-        No creators in the organization yet.
+      <div className="p-6 text-center text-neutral-500 text-sm space-y-1">
+        <p>No creators in the organization yet.</p>
+        <p className="text-xs">
+          Set someone&apos;s role to <span className="text-lime-400">Creator</span>{' '}
+          in the Active Members list above to grant them HF accounts here.
+        </p>
       </div>
     )
   }
