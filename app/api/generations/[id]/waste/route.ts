@@ -1,4 +1,4 @@
-// app/api/works/[id]/assign-generation/route.ts — assign a generation to BOTH client + work.
+// app/api/generations/[id]/waste/route.ts — mark/unmark a generation as waste.
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 
@@ -10,13 +10,10 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id: workId } = await params
-    const { generationId, clientId } = await req.json()
-    if (!generationId || !clientId) {
-      return NextResponse.json({ error: 'Missing fields' }, { status: 400 })
-    }
-
+    const { id: generationId } = await params
+    const { is_waste } = (await req.json()) as { is_waste: boolean }
     const supabase = await createClient()
+
     const {
       data: { user },
     } = await supabase.auth.getUser()
@@ -24,48 +21,39 @@ export async function POST(
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
     }
 
-    const { data: work } = await supabase
-      .from('works')
-      .select('id, client_id, creator_id, org_id')
-      .eq('id', workId)
-      .maybeSingle()
-    if (!work) {
-      return NextResponse.json({ error: 'Work not found' }, { status: 404 })
-    }
-    if (work.client_id !== clientId) {
-      return NextResponse.json({ error: 'Client mismatch' }, { status: 400 })
-    }
-
+    // Any active member can mark as waste; only master/manager can un-waste
     const { data: membership } = await supabase
       .from('memberships')
       .select('role')
       .eq('user_id', user.id)
-      .eq('org_id', work.org_id)
       .eq('status', 'active')
       .maybeSingle()
     if (!membership) {
       return NextResponse.json({ error: 'Not a member' }, { status: 403 })
     }
 
-    const canAssign =
-      membership.role === 'master' ||
-      membership.role === 'manager' ||
-      work.creator_id === user.id
-    if (!canAssign) {
+    if (!is_waste && membership.role === 'creator') {
       return NextResponse.json(
-        { error: 'Cannot assign to this work' },
+        { error: 'Only master/manager can un-waste' },
         { status: 403 }
       )
     }
 
+    const updateData = is_waste
+      ? {
+          is_waste: true,
+          wasted_at: new Date().toISOString(),
+          wasted_by: user.id,
+        }
+      : {
+          is_waste: false,
+          wasted_at: null,
+          wasted_by: null,
+        }
+
     const { error } = await supabase
       .from('generations')
-      .update({
-        client_id: clientId,
-        work_id: workId,
-        assigned_at: new Date().toISOString(),
-        assigned_by: user.id,
-      })
+      .update(updateData)
       .eq('id', generationId)
 
     if (error) {
@@ -73,7 +61,7 @@ export async function POST(
     }
     return NextResponse.json({ success: true })
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Assign failed'
+    const message = err instanceof Error ? err.message : 'Waste toggle failed'
     return NextResponse.json({ error: message }, { status: 500 })
   }
 }

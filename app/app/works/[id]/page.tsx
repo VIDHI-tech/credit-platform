@@ -50,12 +50,12 @@ export default async function WorkDetailPage({ params }: PageProps) {
   const [{ data: unassigned }, { data: assignedToClient }] = await Promise.all([
     supabase
       .from('generations')
-      .select('*')
+      .select('id, display_name, result_url, media_type, credits, hf_created_at, work_id, assigned_at, assigned_by, is_waste')
       .is('client_id', null)
       .order('hf_created_at', { ascending: false }),
     supabase
       .from('generations')
-      .select('*')
+      .select('id, display_name, result_url, media_type, credits, hf_created_at, work_id, assigned_at, assigned_by, is_waste')
       .eq('client_id', work.client_id)
       .order('hf_created_at', { ascending: false }),
   ])
@@ -200,8 +200,10 @@ export default async function WorkDetailPage({ params }: PageProps) {
         workId={work.id}
         clientId={work.client_id}
         clientName={client?.name || ''}
-        unassigned={unassigned || []}
-        assignedToClient={assignedToClient || []}
+        unassigned={(unassigned || []) as any}
+        assignedToClient={(assignedToClient || []) as any}
+        userRole={membership.role as 'master' | 'manager' | 'creator'}
+        userId={membership.user_id}
       />
     </div>
   )
