@@ -1,97 +1,97 @@
 // app/app/clients/[id]/page.tsx — client detail: credit summary, works, generations.
-import { requireActiveMembership } from '@/lib/auth-helpers'
-import { createClient } from '@/lib/supabase-server'
-import { can } from '@/lib/rbac'
-import { notFound } from 'next/navigation'
-import Link from 'next/link'
+import { requireActiveMembership } from "@/lib/auth-helpers";
+import { createClient } from "@/lib/supabase-server";
+import { can } from "@/lib/rbac";
+import { notFound } from "next/navigation";
+import Link from "next/link";
 import {
   CLIENT_STATUS_COLORS,
   CLIENT_STATUS_LABELS,
   type ClientStatus,
-} from '@/lib/client-helpers'
+} from "@/lib/client-helpers";
 import {
   WORK_STATUS_COLORS,
   WORK_STATUS_LABELS,
   type WorkStatus,
-} from '@/lib/work-helpers'
-import { StatusDropdown } from './status-dropdown'
-import { EditClientButton } from './edit-client-button'
-import { DeleteClientButton } from './delete-client-button'
-import { CreateWorkButton } from './create-work-button'
+} from "@/lib/work-helpers";
+import { StatusDropdown } from "./status-dropdown";
+import { EditClientButton } from "./edit-client-button";
+import { DeleteClientButton } from "./delete-client-button";
+import { CreateWorkButton } from "./create-work-button";
 
 interface PageProps {
-  params: Promise<{ id: string }>
+  params: Promise<{ id: string }>;
 }
 
 export default async function ClientDetailPage({ params }: PageProps) {
-  const membership = await requireActiveMembership()
-  const { id } = await params
-  const supabase = await createClient()
+  const membership = await requireActiveMembership();
+  const { id } = await params;
+  const supabase = await createClient();
 
   const { data: client } = await supabase
-    .from('clients')
-    .select('id, name, industry, status')
-    .eq('id', id)
-    .maybeSingle()
+    .from("clients")
+    .select("id, name, industry, status")
+    .eq("id", id)
+    .maybeSingle();
 
-  if (!client) notFound()
+  if (!client) notFound();
 
   const { data: generations } = await supabase
-    .from('generations')
-    .select('id, display_name, result_url, media_type, credits, hf_created_at')
-    .eq('client_id', id)
-    .order('hf_created_at', { ascending: false })
+    .from("generations")
+    .select("id, display_name, result_url, media_type, credits, hf_created_at")
+    .eq("client_id", id)
+    .order("hf_created_at", { ascending: false });
 
   const { data: works } = await supabase
-    .from('works')
-    .select('id, title, video_type, status, end_date, max_credits, creator_id')
-    .eq('client_id', id)
-    .order('created_at', { ascending: false })
+    .from("works")
+    .select("id, title, video_type, status, end_date, max_credits, creator_id")
+    .eq("client_id", id)
+    .order("created_at", { ascending: false });
 
-  const creatorIds = [...new Set((works || []).map((w) => w.creator_id))]
+  const creatorIds = [...new Set((works || []).map((w) => w.creator_id))];
   const { data: creators } = await supabase
-    .from('memberships')
-    .select('user_id, full_name')
+    .from("memberships")
+    .select("user_id, full_name")
     .in(
-      'user_id',
+      "user_id",
       creatorIds.length > 0
         ? creatorIds
-        : ['00000000-0000-0000-0000-000000000000']
-    )
+        : ["00000000-0000-0000-0000-000000000000"],
+    );
   const creatorNameMap = new Map(
-    (creators || []).map((c) => [c.user_id, c.full_name])
-  )
+    (creators || []).map((c) => [c.user_id, c.full_name]),
+  );
 
-  const workIds = (works || []).map((w) => w.id)
+  const workIds = (works || []).map((w) => w.id);
   const { data: workCredits } = await supabase
-    .from('generations')
-    .select('work_id, credits')
+    .from("generations")
+    .select("work_id, credits")
     .in(
-      'work_id',
-      workIds.length > 0 ? workIds : ['00000000-0000-0000-0000-000000000000']
-    )
+      "work_id",
+      workIds.length > 0 ? workIds : ["00000000-0000-0000-0000-000000000000"],
+    );
 
-  const creditByWork = new Map<string, number>()
-  ;(workCredits || []).forEach((row) => {
+  const creditByWork = new Map<string, number>();
+  (workCredits || []).forEach((row) => {
     if (row.work_id) {
       creditByWork.set(
         row.work_id,
-        (creditByWork.get(row.work_id) || 0) + parseFloat(row.credits || '0')
-      )
+        (creditByWork.get(row.work_id) || 0) + parseFloat(row.credits || "0"),
+      );
     }
-  })
+  });
 
   const totalCredits = (generations || []).reduce(
-    (sum, g) => sum + parseFloat(g.credits || '0'),
-    0
-  )
-  const status = client.status as ClientStatus
-  const canEdit = can(membership.role, 'clients', 'edit')
-  const canDelete = can(membership.role, 'clients', 'delete')
-  const canCreateWork = can(membership.role, 'works', 'create')
+    (sum, g) => sum + parseFloat(g.credits || "0"),
+    0,
+  );
+  const status = client.status as ClientStatus;
+  const canEdit = can(membership.role, "clients", "edit");
+  const canDelete = can(membership.role, "clients", "delete");
+  const canCreateWork = can(membership.role, "works", "create");
 
   return (
-    <div className="p-6 max-w-5xl text-neutral-100">
+    <div className="p-6 max-w-5xl mx-auto text-neutral-100">
       <Link
         href="/app/clients"
         className="text-neutral-400 hover:text-white text-sm inline-flex items-center gap-1 mb-4"
@@ -185,7 +185,7 @@ export default async function ClientDetailPage({ params }: PageProps) {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1">
                       <span className="font-medium text-white">
-                        {w.title || w.video_type || 'Untitled work'}
+                        {w.title || w.video_type || "Untitled work"}
                       </span>
                       <span
                         className={`text-xs px-2 py-0.5 rounded border ${WORK_STATUS_COLORS[w.status as WorkStatus]}`}
@@ -195,11 +195,12 @@ export default async function ClientDetailPage({ params }: PageProps) {
                     </div>
                     <div className="text-xs text-neutral-500">
                       {w.video_type && <span>{w.video_type} · </span>}
-                      Creator: {creatorNameMap.get(w.creator_id) || 'Unknown'}
+                      Creator: {creatorNameMap.get(w.creator_id) || "Unknown"}
                       {w.end_date && (
                         <span>
-                          {' '}
-                          · Due {new Date(w.end_date).toLocaleDateString('en-US')}
+                          {" "}
+                          · Due{" "}
+                          {new Date(w.end_date).toLocaleDateString("en-US")}
                         </span>
                       )}
                     </div>
@@ -209,7 +210,7 @@ export default async function ClientDetailPage({ params }: PageProps) {
                       {(creditByWork.get(w.id) || 0).toFixed(1)}
                       {w.max_credits && (
                         <span className="text-neutral-500 text-xs">
-                          {' '}
+                          {" "}
                           / {w.max_credits}
                         </span>
                       )}
@@ -236,7 +237,7 @@ export default async function ClientDetailPage({ params }: PageProps) {
           <div className="divide-y divide-neutral-800 max-h-96 overflow-auto">
             {generations.map((g) => (
               <div key={g.id} className="px-4 py-2 flex items-center gap-3">
-                {g.media_type === 'video' ? (
+                {g.media_type === "video" ? (
                   <video
                     src={g.result_url}
                     className="w-16 h-12 rounded object-cover bg-black"
@@ -256,16 +257,16 @@ export default async function ClientDetailPage({ params }: PageProps) {
                     {g.display_name}
                   </div>
                   <div className="text-xs text-neutral-500">
-                    {new Date(g.hf_created_at).toLocaleDateString('en-US')}
+                    {new Date(g.hf_created_at).toLocaleDateString("en-US")}
                   </div>
                 </div>
                 <div className="text-right">
                   <div
-                    className={`text-sm font-bold ${parseFloat(g.credits) > 0 ? 'text-orange-400' : 'text-neutral-500'}`}
+                    className={`text-sm font-bold ${parseFloat(g.credits) > 0 ? "text-orange-400" : "text-neutral-500"}`}
                   >
                     {parseFloat(g.credits) > 0
                       ? parseFloat(g.credits).toFixed(1)
-                      : 'free'}
+                      : "free"}
                   </div>
                 </div>
               </div>
@@ -287,5 +288,5 @@ export default async function ClientDetailPage({ params }: PageProps) {
         </section>
       )}
     </div>
-  )
+  );
 }

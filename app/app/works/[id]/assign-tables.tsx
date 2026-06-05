@@ -232,6 +232,10 @@ export function AssignTables({
     setError(null)
     const res = await fetch('/api/hf-sync', { method: 'POST' })
     setSyncing(false)
+    if (res.status === 409) {
+      setError('No Higgsfield account connected. Go to Settings to add one.')
+      return
+    }
     if (!res.ok) {
       const data = await res.json().catch(() => ({}))
       setError(`Sync failed: ${data.error || 'unknown'}`)
@@ -280,8 +284,13 @@ export function AssignTables({
   return (
     <div className="space-y-3">
       {error && (
-        <div className="bg-red-950/50 border border-red-800 text-red-300 px-3 py-2 rounded text-sm">
-          {error}
+        <div className="bg-red-950/50 border border-red-800 text-red-300 px-3 py-2 rounded text-sm flex items-center justify-between">
+          <span>{error}</span>
+          {error.includes('Settings') && (
+            <a href="/app/settings" className="text-lime-400 hover:underline text-xs ml-4">
+              Open Settings →
+            </a>
+          )}
         </div>
       )}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

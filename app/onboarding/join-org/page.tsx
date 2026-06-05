@@ -41,12 +41,24 @@ export default function JoinOrgPage() {
     setError(null)
     try {
       const supabase = createClient()
-      const { error } = await supabase.rpc('request_join_org', {
+      const { data: membershipId, error } = await supabase.rpc('request_join_org', {
         target_org_id: selectedOrgId,
         user_full_name: fullName.trim(),
       })
       if (error) throw error
-      router.push('/onboarding/pending')
+
+      // Check if auto-approved (invitation existed)
+      const { data: membership } = await supabase
+        .from('memberships')
+        .select('status')
+        .eq('id', membershipId)
+        .maybeSingle()
+
+      if (membership?.status === 'active') {
+        router.push('/app/dashboard')
+      } else {
+        router.push('/onboarding/pending')
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Something went wrong'
       setError(

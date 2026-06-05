@@ -149,6 +149,10 @@ export default function SyncPage() {
     try {
       const res = await fetch('/api/hf-sync', { method: 'POST' })
       const data = await res.json()
+      if (res.status === 409) {
+        setSyncError('No Higgsfield account connected. Go to Settings to add one.')
+        return
+      }
       if (!res.ok) throw new Error(data.error || 'Sync failed')
       setSyncMessage(data.message)
       await loadData()
@@ -206,8 +210,13 @@ export default function SyncPage() {
         </div>
       )}
       {syncError && (
-        <div className="bg-red-950/50 border border-red-800 text-red-300 px-4 py-2 rounded text-sm">
-          ✗ {syncError}
+        <div className="bg-red-950/50 border border-red-800 text-red-300 px-4 py-2 rounded text-sm flex items-center justify-between">
+          <span>✗ {syncError}</span>
+          {syncError.includes('Settings') && (
+            <a href="/app/settings" className="text-lime-400 hover:underline text-xs ml-4">
+              Open Settings →
+            </a>
+          )}
         </div>
       )}
 

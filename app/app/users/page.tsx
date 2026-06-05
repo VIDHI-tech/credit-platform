@@ -5,12 +5,13 @@ import { can } from '@/lib/rbac'
 import { ApprovalControls } from './approval-controls'
 import { AccountGrantsManager } from './account-grants-manager'
 import { MemberControls } from './member-controls'
+import { InviteUserSection } from './invite-user-section'
 
 export default async function UsersPage() {
   const membership = await requireRole(['master', 'manager'])
   const supabase = await createClient()
 
-  const [{ data: pending }, { data: active }, { data: connections }, { data: grants }] = await Promise.all([
+  const [{ data: pending }, { data: active }, { data: connections }, { data: grants }, { data: invitations }] = await Promise.all([
     supabase
       .from('memberships')
       .select('id, user_id, full_name, requested_at')
@@ -32,6 +33,11 @@ export default async function UsersPage() {
       .from('hf_connection_grants')
       .select('id, connection_id, user_id')
       .eq('org_id', membership.org_id),
+    supabase
+      .from('invitations')
+      .select('id, email, role, created_at, used_at')
+      .eq('org_id', membership.org_id)
+      .order('created_at', { ascending: false }),
   ])
 
   const creators = (active || []).filter((m) => m.role === 'creator')
@@ -45,6 +51,20 @@ export default async function UsersPage() {
           Manage who can access {membership.org_name}.
         </p>
       </div>
+
+      {/* INVITE (master only) */}
+      {membership.role === 'master' && (
+        <InviteUserSection
+          orgId={membership.org_id}
+          initialInvitations={(invitations || []).map(i => ({
+            id: i.id,
+            email: i.email,
+            role: i.role,
+            created_at: i.created_at,
+            used_at: i.used_at,
+          }))}
+        />
+      )}
 
       {/* PENDING */}
       <section className="bg-neutral-950 border border-neutral-800 rounded-lg overflow-hidden">
