@@ -40,6 +40,10 @@ interface VideoType {
   id: string
   name: string
 }
+interface Industry {
+  id: string
+  name: string
+}
 
 interface Props {
   open: boolean
@@ -100,6 +104,10 @@ function WorkForm({
   const [videoType, setVideoType] = useState('')
   const [addingType, setAddingType] = useState(false)
   const [newTypeName, setNewTypeName] = useState('')
+  const [industries, setIndustries] = useState<Industry[]>([])
+  const [industry, setIndustry] = useState('')
+  const [addingIndustry, setAddingIndustry] = useState(false)
+  const [newIndustryName, setNewIndustryName] = useState('')
   const [maxCredits, setMaxCredits] = useState('')
   const [title, setTitle] = useState('')
 
@@ -111,16 +119,18 @@ function WorkForm({
     let cancelled = false
     async function load() {
       const supabase = createClient()
-      const [{ data: m }, { data: vt }] = await Promise.all([
+      const [{ data: m }, { data: vt }, { data: ind }] = await Promise.all([
         supabase
           .from('memberships')
           .select('user_id, full_name, role')
           .eq('status', 'active'),
         supabase.from('video_types').select('id, name').order('name'),
+        supabase.from('industries').select('id, name').order('name'),
       ])
       if (!cancelled) {
         setMembers(m || [])
         setVideoTypes(vt || [])
+        setIndustries(ind || [])
       }
     }
     load()
@@ -170,6 +180,47 @@ function WorkForm({
     }
   }
 
+  async function handleAddIndustry() {
+    if (!newIndustryName.trim()) return
+    const supabase = createClient()
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    if (!user) return
+    const { data: membership } = await supabase
+      .from('memberships')
+      .select('org_id')
+      .eq('user_id', user.id)
+      .eq('status', 'active')
+      .limit(1)
+      .maybeSingle()
+    if (!membership) return
+
+    const { data, error } = await supabase
+      .from('industries')
+      .insert({
+        org_id: membership.org_id,
+        name: newIndustryName.trim(),
+        created_by: user.id,
+      })
+      .select('id, name')
+      .single()
+
+    if (error) {
+      setError(error.message.includes('duplicate') ? 'Industry already exists' : error.message)
+      return
+    }
+    if (data) {
+      setIndustries((prev) =>
+        [...prev, data].sort((a, b) => a.name.localeCompare(b.name))
+      )
+      setIndustry(data.name)
+      setAddingIndustry(false)
+      setNewIndustryName('')
+      setError(null)
+    }
+  }
+
   async function handleSubmit() {
     if (!creatorId) {
       setError('Creator is required')
@@ -215,6 +266,7 @@ function WorkForm({
         creator_id: creatorId,
         title: title.trim() || null,
         video_type: videoType || null,
+        industry: industry || null,
         max_credits: maxCredits ? parseFloat(maxCredits) : null,
         instructions_path: instructionsPath,
         start_date: dateRange?.from ? toIsoDate(dateRange.from) : null,
@@ -456,6 +508,67 @@ function WorkForm({
                   onClick={() => {
                     setAddingType(false)
                     setNewTypeName('')
+                  }}
+                >
+                  Cancel
+                </Button>
+              </div>
+            )}
+          </div>
+          <div>
+            <Label className="text-neutral-300">Industry (optional)</Label>
+            {!addingIndustry ? (
+              <div className="flex gap-2 mt-1">
+                <Select
+                  value={industry}
+                  onValueChange={(v) => {
+                    const val = v as string
+                    if (val === '__add_industry') setAddingIndustry(true)
+                    else setIndustry(val)
+                  }}
+                >
+                  <SelectTrigger className="bg-neutral-900 border-neutral-700 flex-1">
+                    <SelectValue placeholder="Pick or add..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {industries.map((ind) => (
+                      <SelectItem key={ind.id} value={ind.name}>
+                        {ind.name}
+                      </SelectItem>
+                    ))}
+                    <SelectItem value="__add_industry" className="text-lime-400">
+                      + Add new industry
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : (
+              <div className="flex gap-2 mt-1">
+                <Input
+                  value={newIndustryName}
+                  onChange={(e) => setNewIndustryName(e.target.value)}
+                  placeholder="e.g. Food & Beverage, Marketing"
+                  className="bg-neutral-900 border-neutral-700 text-white flex-1"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      handleAddIndustry()
+                    }
+                  }}
+                />
+                <Button
+                  size="sm"
+                  onClick={handleAddIndustry}
+                  className="bg-lime-400 hover:bg-lime-300 text-black font-semibold"
+                >
+                  Add
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setAddingIndustry(false)
+                    setNewIndustryName('')
                   }}
                 >
                   Cancel

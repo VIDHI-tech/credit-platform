@@ -1,4 +1,4 @@
-// app/app/works/page.tsx — works list with status tabs (RLS scopes by role).
+// app/app/works/page.tsx — works list with status tabs + calendar/card toggle.
 import { requireActiveMembership } from '@/lib/auth-helpers'
 import { createClient } from '@/lib/supabase-server'
 import { can } from '@/lib/rbac'
@@ -6,10 +6,9 @@ import Link from 'next/link'
 import {
   WORK_STATUSES,
   WORK_STATUS_LABELS,
-  WORK_STATUS_COLORS,
   type WorkStatus,
-  formatDeadline,
 } from '@/lib/work-helpers'
+import { WorksView } from './works-view'
 
 interface PageProps {
   searchParams: Promise<{ status?: string }>
@@ -66,17 +65,15 @@ export default async function WorksPage({ searchParams }: PageProps) {
         .in('work_id', workIds.length ? workIds : [PLACEHOLDER]),
     ])
 
-  const clientNameMap = new Map((clients || []).map((c) => [c.id, c.name]))
-  const creatorNameMap = new Map(
-    (creators || []).map((c) => [c.user_id, c.full_name])
-  )
-  const creditByWork = new Map<string, number>()
+  const clientNameMap: Record<string, string> = {}
+  ;(clients || []).forEach((c) => { clientNameMap[c.id] = c.name })
+  const creatorNameMap: Record<string, string> = {}
+  ;(creators || []).forEach((c) => { creatorNameMap[c.user_id] = c.full_name })
+  const creditByWork: Record<string, number> = {}
   ;(workCredits || []).forEach((row) => {
     if (row.work_id) {
-      creditByWork.set(
-        row.work_id,
-        (creditByWork.get(row.work_id) || 0) + parseFloat(row.credits || '0')
-      )
+      creditByWork[row.work_id] =
+        (creditByWork[row.work_id] || 0) + parseFloat(row.credits || '0')
     }
   })
 
@@ -118,7 +115,7 @@ export default async function WorksPage({ searchParams }: PageProps) {
         ))}
       </div>
 
-      {/* WORK LIST */}
+      {/* WORKS CONTENT — calendar/cards toggle */}
       {visible.length === 0 ? (
         <div className="bg-neutral-950 border border-neutral-800 rounded-lg p-12 text-center">
           <p className="text-neutral-400">
@@ -130,54 +127,12 @@ export default async function WorksPage({ searchParams }: PageProps) {
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {visible.map((w) => {
-            const usedCredits = creditByWork.get(w.id) || 0
-            const status = w.status as WorkStatus
-            return (
-              <Link
-                key={w.id}
-                href={`/app/works/${w.id}`}
-                className="block bg-neutral-950 border border-neutral-800 hover:border-neutral-600 rounded-lg p-4 transition-colors group"
-              >
-                <div className="flex items-start justify-between gap-2 mb-2">
-                  <h3 className="font-semibold text-white group-hover:text-lime-400 truncate flex-1">
-                    {w.title || w.video_type || 'Untitled'}
-                  </h3>
-                  <span
-                    className={`text-xs px-2 py-0.5 rounded border ${WORK_STATUS_COLORS[status]} whitespace-nowrap`}
-                  >
-                    {WORK_STATUS_LABELS[status]}
-                  </span>
-                </div>
-                <div className="text-sm text-neutral-400 mb-1">
-                  {clientNameMap.get(w.client_id) || 'Unknown client'}
-                </div>
-                <div className="text-xs text-neutral-500 mb-3">
-                  {w.video_type && <span>{w.video_type} · </span>}
-                  {creatorNameMap.get(w.creator_id) || 'Unknown creator'}
-                </div>
-                <div className="flex items-end justify-between pt-3 border-t border-neutral-800">
-                  <div className="text-xs text-neutral-500">
-                    {formatDeadline(w.end_date, w.end_time) || 'No deadline'}
-                  </div>
-                  <div className="text-right">
-                    <div className="text-base font-bold text-white">
-                      {usedCredits.toFixed(1)}
-                      {w.max_credits && (
-                        <span className="text-neutral-500 text-xs">
-                          {' '}
-                          / {w.max_credits}
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-xs text-neutral-500">credits</div>
-                  </div>
-                </div>
-              </Link>
-            )
-          })}
-        </div>
+        <WorksView
+          works={visible}
+          clientNameMap={clientNameMap}
+          creatorNameMap={creatorNameMap}
+          creditByWork={creditByWork}
+        />
       )}
     </div>
   )

@@ -8,6 +8,7 @@ import {
   SelectContent,
   SelectItem,
   SelectTrigger,
+  SelectValue,
 } from '@/components/ui/select'
 import {
   CLIENT_STATUSES,
@@ -55,7 +56,12 @@ export function StatusDropdown({ clientId, currentStatus }: Props) {
       <SelectTrigger
         className={`w-36 h-8 text-xs border ${CLIENT_STATUS_COLORS[status]}`}
       >
-        {CLIENT_STATUS_LABELS[status]}
+        <SelectValue>
+          {(v) => {
+            const val = v as ClientStatus | null
+            return val ? CLIENT_STATUS_LABELS[val] : 'Status'
+          }}
+        </SelectValue>
       </SelectTrigger>
       <SelectContent>
         {CLIENT_STATUSES.map((s) => (
