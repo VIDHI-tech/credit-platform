@@ -9,6 +9,8 @@ import { ModelChart } from './model-chart'
 import { TrendsChart } from './trends-chart'
 import { GenerationsDrilldown } from './generations-drilldown'
 import { ExportButton } from './export-button'
+import { UserWastageChart } from './user-wastage-chart'
+import { UserOntimeChart } from './user-ontime-chart'
 
 interface PageProps {
   searchParams: Promise<{
@@ -39,16 +41,16 @@ export default async function ReportsPage({ searchParams }: PageProps) {
       supabase
         .from('generations')
         .select(
-          'id, display_name, result_url, media_type, credits, client_id, work_id, hf_created_at'
+          'id, display_name, result_url, media_type, credits, client_id, work_id, hf_created_at, assigned_by, is_waste, wasted_by'
         )
         .gte('hf_created_at', `${fromDate}T00:00:00Z`)
         .lte('hf_created_at', `${toDate}T23:59:59Z`)
         .order('hf_created_at', { ascending: false }),
       supabase.from('clients').select('id, name'),
-      supabase.from('works').select('id, title, video_type, creator_id, client_id'),
+      supabase.from('works').select('id, title, video_type, creator_id, client_id, status, end_date, updated_at'),
       supabase
         .from('memberships')
-        .select('user_id, full_name')
+        .select('user_id, full_name, role')
         .eq('status', 'active'),
     ])
 
@@ -57,15 +59,16 @@ export default async function ReportsPage({ searchParams }: PageProps) {
   const workMap = new Map((works || []).map((w) => [w.id, w]))
 
   // ===== AGGREGATIONS =====
-  const totalCredits = (generations || []).reduce(
+  const nonWasteGenerations = (generations || []).filter((g) => !g.is_waste)
+  const totalCredits = nonWasteGenerations.reduce(
     (s, g) => s + parseFloat(g.credits || '0'),
     0
   )
-  const totalGenerations = generations?.length || 0
+  const totalGenerations = nonWasteGenerations.length
 
   // CLIENT-WISE
   const byClient = new Map<string, { name: string; credits: number; count: number }>()
-  ;(generations || []).forEach((g) => {
+  nonWasteGenerations.forEach((g) => {
     if (!g.client_id) return
     const existing = byClient.get(g.client_id) || {
       name: clientMap.get(g.client_id) || 'Unknown',
@@ -91,7 +94,7 @@ export default async function ReportsPage({ searchParams }: PageProps) {
 
   // CREATOR-WISE (via work join)
   const byCreator = new Map<string, { name: string; credits: number; count: number }>()
-  ;(generations || []).forEach((g) => {
+  nonWasteGenerations.forEach((g) => {
     if (!g.work_id) return
     const work = workMap.get(g.work_id)
     if (!work) return
@@ -115,7 +118,7 @@ export default async function ReportsPage({ searchParams }: PageProps) {
 
   // MODEL-WISE
   const byModel = new Map<string, { credits: number; count: number }>()
-  ;(generations || []).forEach((g) => {
+  nonWasteGenerations.forEach((g) => {
     const existing = byModel.get(g.display_name) || { credits: 0, count: 0 }
     existing.credits += parseFloat(g.credits || '0')
     existing.count++
@@ -131,7 +134,7 @@ export default async function ReportsPage({ searchParams }: PageProps) {
 
   // DAILY TREND
   const byDay = new Map<string, { credits: number; count: number }>()
-  ;(generations || []).forEach((g) => {
+  nonWasteGenerations.forEach((g) => {
     const day = g.hf_created_at.split('T')[0]
     const existing = byDay.get(day) || { credits: 0, count: 0 }
     existing.credits += parseFloat(g.credits || '0')
@@ -146,8 +149,68 @@ export default async function ReportsPage({ searchParams }: PageProps) {
     }))
     .sort((a, b) => a.date.localeCompare(b.date))
 
+  // ===== D1: USER REPORT =====
+  const todayDate = new Date().toISOString().split('T')[0]
+  const creators = (memberships || []).filter((m) => m.role === 'creator')
+
+  const userReportData = creators.map((creator) => {
+    // Credits assigned (by this user, non-waste)
+    const assignedGens = nonWasteGenerations.filter(
+      (g) => g.assigned_by === creator.user_id
+    )
+    const creditsAssigned = assignedGens.reduce(
+      (s, g) => s + parseFloat(g.credits || '0'),
+      0
+    )
+
+    // Wastage
+    const wasteGens = (generations || []).filter(
+      (g) => g.wasted_by === creator.user_id && g.is_waste
+    )
+    const wastageCredits = wasteGens.reduce(
+      (s, g) => s + parseFloat(g.credits || '0'),
+      0
+    )
+
+    // Works metrics
+    const creatorWorks = (works || []).filter((w) => w.creator_id === creator.user_id)
+    const completedWorks = creatorWorks.filter((w) => w.status === 'completed')
+    const completedOnTime = completedWorks.filter((w) => {
+      if (!w.end_date || !w.updated_at) return false
+      return w.updated_at.split('T')[0] <= w.end_date
+    })
+    const missedDeadline = creatorWorks.filter((w) => {
+      if (!w.end_date) return false
+      return w.status !== 'completed' && w.end_date < todayDate
+    })
+    const activeWorks = creatorWorks.filter((w) => w.status !== 'completed')
+
+    return {
+      id: creator.user_id,
+      name: creator.full_name,
+      credits_assigned: parseFloat(creditsAssigned.toFixed(2)),
+      wastage_count: wasteGens.length,
+      wastage_credits: parseFloat(wastageCredits.toFixed(2)),
+      completed_on_time: completedOnTime.length,
+      deadline_missed: missedDeadline.length,
+      completed_total: completedWorks.length,
+      active_works: activeWorks.length,
+    }
+  })
+
+  const userCsvData = userReportData.map((u) => ({
+    Creator: u.name,
+    'Credits Assigned': u.credits_assigned,
+    'Wastage Count': u.wastage_count,
+    'Wastage Credits': u.wastage_credits,
+    'Completed On Time': u.completed_on_time,
+    'Deadline Missed': u.deadline_missed,
+    'Total Completed': u.completed_total,
+    'Active Works': u.active_works,
+  }))
+
   // DRILL-DOWN (filtered by url params)
-  const filteredGenerations = (generations || []).filter((g) => {
+  const filteredGenerations = nonWasteGenerations.filter((g) => {
     if (params.clientId && g.client_id !== params.clientId) return false
     if (params.model && g.display_name !== params.model) return false
     if (params.creatorId) {
@@ -166,7 +229,7 @@ export default async function ReportsPage({ searchParams }: PageProps) {
   }))
 
   const uniqueModels = Array.from(
-    new Set((generations || []).map((g) => g.display_name))
+    new Set(nonWasteGenerations.map((g) => g.display_name))
   )
 
   return (
@@ -291,6 +354,125 @@ export default async function ReportsPage({ searchParams }: PageProps) {
               </table>
             </div>
           </div>
+        )}
+      </section>
+
+      {/* ★ USER REPORT ★ */}
+      <section className="bg-neutral-950 border border-purple-900/50 rounded-lg overflow-hidden">
+        <div className="px-4 py-3 border-b border-neutral-800 flex items-center justify-between gap-4">
+          <div>
+            <h2 className="font-semibold text-white text-lg">
+              ★ User Report
+            </h2>
+            <p className="text-xs text-neutral-500 mt-0.5">
+              Per-creator performance metrics
+            </p>
+          </div>
+          <ExportButton
+            filename={`user-report-${fromDate}-to-${toDate}.csv`}
+            data={userCsvData}
+          />
+        </div>
+        {userReportData.length === 0 ? (
+          <div className="p-8 text-center text-neutral-500">
+            No creators found.
+          </div>
+        ) : (
+          <>
+            {/* Summary table */}
+            <div className="overflow-auto p-4">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-neutral-950">
+                  <tr className="text-xs text-neutral-500 border-b border-neutral-800">
+                    <th className="text-left py-2 pl-2">Creator</th>
+                    <th className="text-right py-2">Credits Assigned</th>
+                    <th className="text-right py-2">Wastage</th>
+                    <th className="text-right py-2">Waste Cr.</th>
+                    <th className="text-right py-2">On Time</th>
+                    <th className="text-right py-2">Missed</th>
+                    <th className="text-right py-2">Completed</th>
+                    <th className="text-right py-2 pr-2">Active</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-neutral-800">
+                  {userReportData.map((row) => (
+                    <tr key={row.id} className="hover:bg-neutral-900/40">
+                      <td className="py-2 pl-2 text-white font-medium">
+                        {row.name}
+                      </td>
+                      <td className="py-2 text-right text-orange-400 font-bold">
+                        {row.credits_assigned.toFixed(1)}
+                      </td>
+                      <td className="py-2 text-right text-neutral-400">
+                        {row.wastage_count}
+                      </td>
+                      <td className="py-2 text-right text-red-400">
+                        {row.wastage_credits > 0
+                          ? row.wastage_credits.toFixed(1)
+                          : '—'}
+                      </td>
+                      <td className="py-2 text-right text-green-400">
+                        {row.completed_on_time}
+                      </td>
+                      <td className="py-2 text-right text-red-400">
+                        {row.deadline_missed || '—'}
+                      </td>
+                      <td className="py-2 text-right text-neutral-300">
+                        {row.completed_total}
+                      </td>
+                      <td className="py-2 text-right pr-2 text-neutral-400">
+                        {row.active_works}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Charts */}
+            <div className="grid md:grid-cols-2 gap-4 p-4 pt-0">
+              <div>
+                <h3 className="text-xs text-neutral-500 uppercase tracking-wider mb-2">
+                  Credits Assigned per Creator
+                </h3>
+                <CreatorChart
+                  data={userReportData.map((u) => ({
+                    id: u.id,
+                    name: u.name,
+                    credits: u.credits_assigned,
+                    count: 0,
+                  }))}
+                />
+              </div>
+              <div>
+                <h3 className="text-xs text-neutral-500 uppercase tracking-wider mb-2">
+                  Wastage per Creator
+                </h3>
+                <UserWastageChart
+                  data={userReportData
+                    .filter((u) => u.wastage_credits > 0)
+                    .map((u) => ({
+                      name: u.name,
+                      wastage_credits: u.wastage_credits,
+                    }))}
+                />
+              </div>
+            </div>
+            <div className="p-4 pt-0">
+              <h3 className="text-xs text-neutral-500 uppercase tracking-wider mb-2">
+                On Time vs Missed Deadlines
+              </h3>
+              <UserOntimeChart
+                data={userReportData
+                  .filter((u) => u.completed_on_time > 0 || u.deadline_missed > 0)
+                  .map((u) => ({
+                    name: u.name,
+                    on_time: u.completed_on_time,
+                    missed: u.deadline_missed,
+                  }))}
+              />
+            </div>
+          </>
         )}
       </section>
 
