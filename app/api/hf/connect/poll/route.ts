@@ -40,8 +40,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ status: 'pending' })
     }
     if (result.status === 'error') {
+      console.error('[hf-connect-poll] device token error:', result.message)
       return NextResponse.json({ status: 'error', error: result.message })
     }
+    console.log('[hf-connect-poll] device approved, storing connection…')
 
     // Success — identify the account, then store encrypted.
     const { tokens } = result
@@ -69,12 +71,14 @@ export async function POST(req: NextRequest) {
       created_by: user.id,
     })
     if (insertError) {
+      console.error('[hf-connect-poll] insert failed:', insertError)
       return NextResponse.json(
         { status: 'error', error: insertError.message },
         { status: 500 }
       )
     }
 
+    console.log('[hf-connect-poll] connection stored for', email || '(no email)')
     return NextResponse.json({ status: 'done', email })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Poll failed'

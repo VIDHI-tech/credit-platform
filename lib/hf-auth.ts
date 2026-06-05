@@ -71,14 +71,55 @@ export async function pollDeviceToken(deviceCode: string): Promise<PollResult> {
   })
   const data = await res.json().catch(() => ({}))
 
-  if (res.ok && data.access_token) {
-    return { status: 'done', tokens: data as TokenSet }
-  }
+  // Pending (HTTP 400 + detail). Check this FIRST so a 4xx body is read correctly.
   const detail = String(data?.detail ?? '')
   if (detail === 'authorization_pending' || detail === 'slow_down') {
     return { status: 'pending' }
   }
-  return { status: 'error', message: detail || `Poll failed (${res.status})` }
+
+  // Success — accept the access token wherever the backend nests it.
+  const tokens = extractTokens(data)
+  if (tokens) {
+    return { status: 'done', tokens }
+  }
+
+  // Anything else: log the shape (keys only, never values) so we can diagnose.
+  console.error(
+    '[hf-auth] unexpected /token response — status:',
+    res.status,
+    'keys:',
+    Object.keys(data || {}),
+    'detail:',
+    detail || '(none)'
+  )
+  return {
+    status: 'error',
+    message: detail || `Unexpected token response (HTTP ${res.status})`,
+  }
+}
+
+// The device /token success body could plausibly be flat or nested; find it.
+function extractTokens(data: unknown): TokenSet | null {
+  if (!data || typeof data !== 'object') return null
+  const candidates = [
+    data as Record<string, unknown>,
+    (data as Record<string, unknown>).tokens as Record<string, unknown>,
+    (data as Record<string, unknown>).data as Record<string, unknown>,
+    (data as Record<string, unknown>).result as Record<string, unknown>,
+  ]
+  for (const c of candidates) {
+    if (c && typeof c === 'object' && typeof c.access_token === 'string') {
+      return {
+        access_token: c.access_token as string,
+        refresh_token: (c.refresh_token as string) || '',
+        expires_in:
+          typeof c.expires_in === 'number'
+            ? (c.expires_in as number)
+            : undefined,
+      }
+    }
+  }
+  return null
 }
 
 /** Exchange a refresh token for a new token set. */

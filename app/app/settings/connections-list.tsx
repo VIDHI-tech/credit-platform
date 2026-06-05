@@ -15,7 +15,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
-import { AddAccountDialog } from './add-account-dialog'
+import { AddAccountPanel } from './add-account-panel'
 
 interface ConnectionRow {
   id: string
@@ -164,16 +164,24 @@ export function ConnectionsList({
         </div>
       )}
 
-      <div className="px-4 py-3 border-t border-neutral-800">
-        <Button
-          onClick={() => setAddOpen(true)}
-          className="bg-lime-400 hover:bg-lime-300 text-black font-semibold"
-        >
-          + Add Higgsfield account
-        </Button>
-      </div>
-
-      <AddAccountDialog open={addOpen} onOpenChange={setAddOpen} />
+      {addOpen ? (
+        <AddAccountPanel
+          onCancel={() => setAddOpen(false)}
+          onDone={() => {
+            setAddOpen(false)
+            router.refresh()
+          }}
+        />
+      ) : (
+        <div className="px-4 py-3 border-t border-neutral-800">
+          <Button
+            onClick={() => setAddOpen(true)}
+            className="bg-lime-400 hover:bg-lime-300 text-black font-semibold"
+          >
+            + Add Higgsfield account
+          </Button>
+        </div>
+      )}
     </div>
   )
 }
