@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase-browser'
+import { can } from '@/lib/rbac'
 import { Button } from '@/components/ui/button'
 import {
   Select,
@@ -11,8 +12,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import type { Role } from '@/lib/auth-helpers'
 
-export function ApprovalControls({ membershipId }: { membershipId: string }) {
+interface ApprovalControlsProps {
+  membershipId: string
+  userRole: Role
+}
+
+export function ApprovalControls({ membershipId, userRole }: ApprovalControlsProps) {
   const router = useRouter()
   const [role, setRole] = useState<'manager' | 'creator'>('creator')
   const [busy, setBusy] = useState(false)
@@ -43,6 +50,12 @@ export function ApprovalControls({ membershipId }: { membershipId: string }) {
       .update({ status: 'rejected' })
       .eq('id', membershipId)
     router.refresh()
+  }
+
+  const canApprove = can(userRole, 'users_approvals', 'edit')
+
+  if (!canApprove) {
+    return <div className="text-xs text-neutral-500">Pending</div>
   }
 
   return (

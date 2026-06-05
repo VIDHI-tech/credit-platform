@@ -1,12 +1,13 @@
-// app/app/users/page.tsx — master only. Pending requests + active members + HF grants.
+// app/app/users/page.tsx — master (full control) + manager (read-only).
 import { requireRole } from '@/lib/auth-helpers'
 import { createClient } from '@/lib/supabase-server'
+import { can } from '@/lib/rbac'
 import { ApprovalControls } from './approval-controls'
 import { AccountGrantsManager } from './account-grants-manager'
 import { MemberControls } from './member-controls'
 
 export default async function UsersPage() {
-  const membership = await requireRole(['master'])
+  const membership = await requireRole(['master', 'manager'])
   const supabase = await createClient()
 
   const [{ data: pending }, { data: active }, { data: connections }, { data: grants }] = await Promise.all([
@@ -68,7 +69,7 @@ export default async function UsersPage() {
                     Requested {new Date(p.requested_at).toLocaleString()}
                   </div>
                 </div>
-                <ApprovalControls membershipId={p.id} />
+                <ApprovalControls membershipId={p.id} userRole={membership.role} />
               </div>
             ))}
           </div>
@@ -102,6 +103,7 @@ export default async function UsersPage() {
                 <MemberControls
                   membershipId={a.id}
                   currentRole={role}
+                  userRole={membership.role}
                   fullName={a.full_name}
                   isYou={isYou}
                   isLastMaster={isLastMaster}

@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase-browser'
+import { can } from '@/lib/rbac'
 import { Button } from '@/components/ui/button'
 import {
   Select,
@@ -34,6 +35,7 @@ const ROLE_LABELS: Record<Role, string> = {
 interface Props {
   membershipId: string
   currentRole: Role
+  userRole: Role
   fullName: string
   isYou: boolean
   /** true when this is the org's last master — block demotion/removal. */
@@ -41,10 +43,11 @@ interface Props {
 }
 
 // Inline controls for an existing active member: change role + remove.
-// Master-only context (already enforced upstream).
+// Master-only for edit/delete; managers see read-only view.
 export function MemberControls({
   membershipId,
   currentRole,
+  userRole,
   fullName,
   isYou,
   isLastMaster,
@@ -98,13 +101,24 @@ export function MemberControls({
     setBusy(false)
   }
 
+  const canEdit = can(userRole, 'users_role_edit', 'edit')
+  const canRemove = can(userRole, 'users_remove', 'delete')
+
+  if (!canEdit && !canRemove) {
+    return (
+      <div className="text-xs text-neutral-500">
+        {ROLE_LABELS[role]}
+      </div>
+    )
+  }
+
   return (
     <div className="flex flex-col items-end gap-1">
       <div className="flex items-center gap-2">
         <Select
           value={role}
           onValueChange={(v) => changeRole(v as Role)}
-          disabled={busy}
+          disabled={busy || !canEdit}
         >
           <SelectTrigger className="w-28 h-8 text-xs bg-neutral-900 border-neutral-700">
             <SelectValue>
@@ -121,17 +135,18 @@ export function MemberControls({
           </SelectContent>
         </Select>
 
-        <AlertDialog>
-          <AlertDialogTrigger
-            render={
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={busy || isLastMaster}
-                className="h-8 text-red-400 border-red-900 hover:bg-red-950 disabled:opacity-40"
-              />
-            }
-          >
+        {canRemove && (
+          <AlertDialog>
+            <AlertDialogTrigger
+              render={
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={busy || isLastMaster}
+                  className="h-8 text-red-400 border-red-900 hover:bg-red-950 disabled:opacity-40"
+                />
+              }
+            >
             Remove
           </AlertDialogTrigger>
           <AlertDialogContent className="bg-neutral-950 border-neutral-800">
@@ -156,7 +171,8 @@ export function MemberControls({
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
-        </AlertDialog>
+          </AlertDialog>
+        )}
       </div>
 
       {isYou && (
