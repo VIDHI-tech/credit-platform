@@ -26,28 +26,31 @@ export default async function WorkDetailPage({ params }: PageProps) {
   const { id } = await params
   const supabase = await createClient()
 
+  // Fetch work with org scope check via clients table
   const { data: work } = await supabase
     .from('works')
     .select(
-      'id, title, video_type, industry, status, start_date, end_date, start_time, end_time, max_credits, client_id, creator_id, instructions_path, notes'
+      `id, title, video_type, industry, status, start_date, end_date, start_time, end_time, max_credits, client_id, creator_id, instructions_path, notes,
+       clients(id, name, status, org_id)`
     )
     .eq('id', id)
     .maybeSingle()
 
   if (!work) notFound()
 
-  const [{ data: client }, { data: creator }] = await Promise.all([
-    supabase
-      .from('clients')
-      .select('id, name, status')
-      .eq('id', work.client_id)
-      .maybeSingle(),
-    supabase
-      .from('memberships')
-      .select('full_name')
-      .eq('user_id', work.creator_id)
-      .maybeSingle(),
-  ])
+  // Verify user is in the same org as this work's client
+  const clientOrgId = (work.clients as any)?.org_id
+  if (clientOrgId !== membership.org_id) {
+    notFound()
+  }
+
+  // Client info already fetched above; creator still needs to be fetched
+  const client = (work.clients as any)
+  const { data: creator } = await supabase
+    .from('memberships')
+    .select('full_name')
+    .eq('user_id', work.creator_id)
+    .maybeSingle()
 
   const [{ data: unassigned }, { data: assignedToClient }] = await Promise.all([
     supabase
