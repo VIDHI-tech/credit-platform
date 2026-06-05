@@ -22,7 +22,11 @@ export function AddAccountPanel({
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const cancelled = useRef(false)
 
+  // Re-arm on setup AND stop polling on unmount. The setup reset is required
+  // because React Strict Mode (dev) runs setup→cleanup→setup on mount; without
+  // it, cancelled.current stays true and the poll loop never fetches.
   useEffect(() => {
+    cancelled.current = false
     return () => {
       cancelled.current = true
       if (timer.current) clearTimeout(timer.current)
