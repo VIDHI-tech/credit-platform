@@ -1,6 +1,7 @@
 // app/app/clients/[id]/page.tsx — client detail: credit summary, works, generations.
 import { requireActiveMembership } from '@/lib/auth-helpers'
 import { createClient } from '@/lib/supabase-server'
+import { can } from '@/lib/rbac'
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import {
@@ -85,9 +86,9 @@ export default async function ClientDetailPage({ params }: PageProps) {
     0
   )
   const status = client.status as ClientStatus
-  const canEdit = membership.role === 'master' || membership.role === 'manager'
-  const canDelete = membership.role === 'master'
-  const canCreateWork = canEdit
+  const canEdit = can(membership.role, 'clients', 'edit')
+  const canDelete = can(membership.role, 'clients', 'delete')
+  const canCreateWork = can(membership.role, 'works', 'create')
 
   return (
     <div className="p-6 max-w-5xl text-neutral-100">

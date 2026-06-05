@@ -1,6 +1,7 @@
 // app/app/dashboard/page.tsx — role-aware command center (server component).
 import { requireActiveMembership } from '@/lib/auth-helpers'
 import { createClient } from '@/lib/supabase-server'
+import { can } from '@/lib/rbac'
 import { type ClientStatus } from '@/lib/client-helpers'
 import {
   WORK_STATUS_COLORS,

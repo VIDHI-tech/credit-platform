@@ -1,6 +1,7 @@
 // app/app/clients/page.tsx — clients list, filterable by status, fixed-order grid.
 import { requireActiveMembership } from '@/lib/auth-helpers'
 import { createClient } from '@/lib/supabase-server'
+import { can } from '@/lib/rbac'
 import {
   CLIENT_STATUSES,
   CLIENT_STATUS_LABELS,
@@ -65,8 +66,7 @@ export default async function ClientsPage({ searchParams }: PageProps) {
       : enrichedClients
 
   const sorted = sortClientsByStatus(visibleClients)
-  const canCreate =
-    membership.role === 'master' || membership.role === 'manager'
+  const canCreate = can(membership.role, 'clients', 'create')
   const showSections = !filterStatus || filterStatus === 'all'
 
   return (

@@ -1,6 +1,7 @@
 // app/app/works/page.tsx — works list with status tabs (RLS scopes by role).
 import { requireActiveMembership } from '@/lib/auth-helpers'
 import { createClient } from '@/lib/supabase-server'
+import { can } from '@/lib/rbac'
 import Link from 'next/link'
 import {
   WORK_STATUSES,
