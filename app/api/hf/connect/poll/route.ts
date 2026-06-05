@@ -54,12 +54,6 @@ export async function POST(req: NextRequest) {
       // non-fatal; label still works without the email
     }
 
-    // Is this the first connection? If so, make it active.
-    const { count } = await supabase
-      .from('hf_connections')
-      .select('id', { count: 'exact', head: true })
-      .eq('org_id', membership.org_id)
-
     const { error: insertError } = await supabase.from('hf_connections').insert({
       org_id: membership.org_id,
       label: (label && String(label).trim()) || email || 'Higgsfield account',
@@ -67,7 +61,9 @@ export async function POST(req: NextRequest) {
       access_token_enc: encrypt(tokens.access_token),
       refresh_token_enc: encrypt(tokens.refresh_token),
       expires_at: expiresAtFrom(tokens),
-      is_active: (count ?? 0) === 0,
+      // Multi-account: new connections are enabled by default; master can
+      // disable from Settings if they want it idle.
+      is_active: true,
       created_by: user.id,
     })
     if (insertError) {

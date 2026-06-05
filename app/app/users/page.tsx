@@ -1,13 +1,14 @@
-// app/app/users/page.tsx — master only. Pending requests + active members.
+// app/app/users/page.tsx — master only. Pending requests + active members + HF grants.
 import { requireRole } from '@/lib/auth-helpers'
 import { createClient } from '@/lib/supabase-server'
 import { ApprovalControls } from './approval-controls'
+import { AccountGrantsManager } from './account-grants-manager'
 
 export default async function UsersPage() {
   const membership = await requireRole(['master'])
   const supabase = await createClient()
 
-  const [{ data: pending }, { data: active }] = await Promise.all([
+  const [{ data: pending }, { data: active }, { data: connections }, { data: grants }] = await Promise.all([
     supabase
       .from('memberships')
       .select('id, user_id, full_name, requested_at')
@@ -20,7 +21,18 @@ export default async function UsersPage() {
       .eq('org_id', membership.org_id)
       .eq('status', 'active')
       .order('approved_at', { ascending: true }),
+    supabase
+      .from('hf_connections')
+      .select('id, label, hf_email')
+      .eq('org_id', membership.org_id)
+      .order('created_at', { ascending: true }),
+    supabase
+      .from('hf_connection_grants')
+      .select('id, connection_id, user_id')
+      .eq('org_id', membership.org_id),
   ])
+
+  const creators = (active || []).filter((m) => m.role === 'creator')
 
   return (
     <div className="p-6 space-y-8 text-neutral-100">
@@ -85,6 +97,35 @@ export default async function UsersPage() {
             </div>
           ))}
         </div>
+      </section>
+
+      {/* HF ACCOUNT ACCESS */}
+      <section className="bg-neutral-950 border border-neutral-800 rounded-lg overflow-hidden">
+        <div className="px-4 py-3 border-b border-neutral-800">
+          <h2 className="font-semibold text-white">Higgsfield Account Access</h2>
+          <p className="text-xs text-neutral-500 mt-0.5">
+            Control which HF accounts each creator can use. Expand a creator to
+            toggle individual accounts.
+          </p>
+        </div>
+        <AccountGrantsManager
+          orgId={membership.org_id}
+          connections={(connections || []).map((c) => ({
+            id: c.id,
+            label: c.label,
+            hf_email: c.hf_email,
+          }))}
+          creators={creators.map((c) => ({
+            id: c.id,
+            user_id: c.user_id,
+            full_name: c.full_name,
+          }))}
+          grants={(grants || []).map((g) => ({
+            id: g.id,
+            connection_id: g.connection_id,
+            user_id: g.user_id,
+          }))}
+        />
       </section>
     </div>
   )

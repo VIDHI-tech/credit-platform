@@ -26,7 +26,6 @@ interface ConnectionRow {
 }
 
 export function ConnectionsList({
-  orgId,
   connections,
 }: {
   orgId: string
@@ -37,27 +36,15 @@ export function ConnectionsList({
   const [busyId, setBusyId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  async function setActive(id: string) {
+  async function toggleEnabled(id: string, next: boolean) {
     setBusyId(id)
     setError(null)
     const supabase = createClient()
-    // Deactivate the others first (avoids the one-active-per-org unique index),
-    // then activate the target.
-    const off = await supabase
+    const { error } = await supabase
       .from('hf_connections')
-      .update({ is_active: false })
-      .eq('org_id', orgId)
-      .neq('id', id)
-    if (off.error) {
-      setError(off.error.message)
-      setBusyId(null)
-      return
-    }
-    const on = await supabase
-      .from('hf_connections')
-      .update({ is_active: true })
+      .update({ is_active: next })
       .eq('id', id)
-    if (on.error) setError(on.error.message)
+    if (error) setError(error.message)
     setBusyId(null)
     router.refresh()
   }
@@ -96,28 +83,30 @@ export function ConnectionsList({
                   <span className="font-medium text-white truncate">
                     {c.label}
                   </span>
-                  {c.is_active && (
-                    <span className="text-xs px-2 py-0.5 rounded border bg-lime-900/40 text-lime-300 border-lime-700">
-                      Active
-                    </span>
-                  )}
+                  <span
+                    className={`text-xs px-2 py-0.5 rounded border ${
+                      c.is_active
+                        ? 'bg-lime-900/40 text-lime-300 border-lime-700'
+                        : 'bg-neutral-900 text-neutral-500 border-neutral-700'
+                    }`}
+                  >
+                    {c.is_active ? 'Enabled' : 'Disabled'}
+                  </span>
                 </div>
                 {c.hf_email && (
                   <div className="text-xs text-neutral-500">{c.hf_email}</div>
                 )}
               </div>
               <div className="flex items-center gap-2 shrink-0">
-                {!c.is_active && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={busyId === c.id}
-                    onClick={() => setActive(c.id)}
-                    className="h-8"
-                  >
-                    Set active
-                  </Button>
-                )}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={busyId === c.id}
+                  onClick={() => toggleEnabled(c.id, !c.is_active)}
+                  className="h-8"
+                >
+                  {c.is_active ? 'Disable' : 'Enable'}
+                </Button>
                 <AlertDialog>
                   <AlertDialogTrigger
                     render={

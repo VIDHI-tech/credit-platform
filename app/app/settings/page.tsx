@@ -27,7 +27,8 @@ export default async function SettingsPage() {
       <div>
         <h1 className="text-2xl font-bold text-white">Settings</h1>
         <p className="text-neutral-400 text-sm mt-1">
-          Connect one or more Higgsfield accounts and choose which one syncs.
+          Connect one or more Higgsfield accounts. Each can be enabled or
+          disabled, and creators get per-account access from Users.
         </p>
       </div>
 
@@ -35,7 +36,9 @@ export default async function SettingsPage() {
         <div className="px-4 py-3 border-b border-neutral-800">
           <h2 className="font-semibold text-white">Higgsfield Accounts</h2>
           <p className="text-xs text-neutral-500 mt-0.5">
-            The active account is the one used by Sync &amp; Assign.
+            Sync &amp; Assign pulls from every enabled account you have access
+            to. Disable an account to keep it idle without revoking creator
+            grants.
           </p>
         </div>
         <ConnectionsList

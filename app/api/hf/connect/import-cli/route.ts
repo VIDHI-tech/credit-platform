@@ -63,11 +63,6 @@ export async function POST() {
       /* non-fatal */
     }
 
-    const { count } = await supabase
-      .from('hf_connections')
-      .select('id', { count: 'exact', head: true })
-      .eq('org_id', membership.org_id)
-
     const { error: insertError } = await supabase.from('hf_connections').insert({
       org_id: membership.org_id,
       label: email ? `${email} (CLI)` : 'CLI account',
@@ -75,7 +70,7 @@ export async function POST() {
       access_token_enc: encrypt(creds.access_token),
       refresh_token_enc: encrypt(creds.refresh_token),
       expires_at: null,
-      is_active: (count ?? 0) === 0,
+      is_active: true,
       created_by: user.id,
     })
     if (insertError) {
