@@ -21,8 +21,9 @@ import { Badge } from '@/components/ui/badge'
 import { Undo2 } from 'lucide-react'
 import type { WorkStatus } from '@/lib/work-helpers'
 
-// Per spec: 20-second window for unassign-undo / mark-useful-undo.
-const UNDO_WINDOW_MS = 20000
+// Per spec: 60-second window for unassign-undo / mark-useful-undo.
+// Kept in sync with the same threshold on the unassign + waste API routes.
+const UNDO_WINDOW_MS = 60000
 
 interface Generation {
   id: string

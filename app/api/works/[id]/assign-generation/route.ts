@@ -1,4 +1,9 @@
 // app/api/works/[id]/assign-generation/route.ts — assign a generation to BOTH client + work.
+// Cross-client assignment: if the caller picks a client that DOESN'T match
+// the work in the URL, work_id is set to NULL (the generation is attributed
+// to that client at the client level, with no specific work owning it).
+// This lets the Sync & Assign modal redirect credits to any client in the org
+// from a single work-detail flow.
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 
@@ -32,9 +37,6 @@ export async function POST(
     if (!work) {
       return NextResponse.json({ error: 'Work not found' }, { status: 404 })
     }
-    if (work.client_id !== clientId) {
-      return NextResponse.json({ error: 'Client mismatch' }, { status: 400 })
-    }
 
     const { data: membership } = await supabase
       .from('memberships')
@@ -47,22 +49,29 @@ export async function POST(
       return NextResponse.json({ error: 'Not a member' }, { status: 403 })
     }
 
+    // The current work's own creator can assign to this work. For cross-
+    // client assignments, only master/manager can redirect credits.
+    const isCrossClient = work.client_id !== clientId
     const canAssign =
       membership.role === 'master' ||
       membership.role === 'manager' ||
-      work.creator_id === user.id
+      (!isCrossClient && work.creator_id === user.id)
     if (!canAssign) {
       return NextResponse.json(
-        { error: 'Cannot assign to this work' },
+        { error: 'Cannot assign to this client' },
         { status: 403 }
       )
     }
+
+    // If the picked client matches the current work, tie the generation to
+    // that work. If it doesn't, attribute at the client level only.
+    const effectiveWorkId = isCrossClient ? null : workId
 
     const { error } = await supabase
       .from('generations')
       .update({
         client_id: clientId,
-        work_id: workId,
+        work_id: effectiveWorkId,
         assigned_at: new Date().toISOString(),
         assigned_by: user.id,
       })

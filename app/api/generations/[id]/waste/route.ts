@@ -24,7 +24,7 @@ export async function POST(
     // Any active member can mark as waste. Un-waste rules:
     //   - master            : anytime
     //   - manager           : anytime
-    //   - creator (waster)  : only within 20s of their own waste action
+    //   - creator (waster)  : only within 60s of their own waste action
     //   - creator (other)   : never
     const { data: membership } = await supabase
       .from('memberships')
@@ -37,7 +37,7 @@ export async function POST(
     }
 
     if (!is_waste && membership.role === 'creator') {
-      // Creator un-waste: must be the waster AND within the 20s window.
+      // Creator un-waste: must be the waster AND within the 60s window.
       const { data: gen } = await supabase
         .from('generations')
         .select('wasted_by, wasted_at')
@@ -57,9 +57,9 @@ export async function POST(
       }
       if (gen.wasted_at) {
         const elapsed = Date.now() - new Date(gen.wasted_at).getTime()
-        if (elapsed > 20000) {
+        if (elapsed > 60000) {
           return NextResponse.json(
-            { error: 'Mark-useful window expired (20 seconds)' },
+            { error: 'Mark-useful window expired (60 seconds)' },
             { status: 403 }
           )
         }

@@ -247,33 +247,45 @@ export function SyncAndAssign({
 
   async function runBatch(mode: 'actual' | 'waste') {
     if (selectedIds.size === 0) return
-    if (mode === 'actual' && !destClientId) {
+    if (!destClientId) {
       setBatchError('Pick a client first.')
       return
     }
     setBatchBusy(mode)
     setBatchError(null)
     const ids = Array.from(selectedIds)
+    const targetClientId = destClientId
 
+    // Step 1 — always assign-generation first so client_id (and, when the
+    // picked client matches the current work, work_id) are set. The API now
+    // permits cross-client assignment: work_id ends up NULL when the picked
+    // client differs from this work's client, so the generation lives on
+    // that client at the client level without being chained to a foreign
+    // work.
     const failures: string[] = []
-    if (mode === 'actual') {
-      const results = await Promise.all(
-        ids.map(async (gid) => {
-          const res = await fetch(`/api/works/${workId}/assign-generation`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ generationId: gid, clientId: destClientId }),
-          })
-          if (!res.ok) {
-            const d = await res.json().catch(() => ({}))
-            failures.push(`${gid.slice(0, 8)}: ${d?.error || res.statusText}`)
-          }
-        }),
-      )
-      void results
-    } else {
-      const results = await Promise.all(
-        ids.map(async (gid) => {
+    const assignedIds: string[] = []
+    await Promise.all(
+      ids.map(async (gid) => {
+        const res = await fetch(`/api/works/${workId}/assign-generation`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ generationId: gid, clientId: targetClientId }),
+        })
+        if (!res.ok) {
+          const d = await res.json().catch(() => ({}))
+          failures.push(`${gid.slice(0, 8)}: ${d?.error || res.statusText}`)
+          return
+        }
+        assignedIds.push(gid)
+      }),
+    )
+
+    // Step 2 — for Wastage, also mark each successfully-assigned generation
+    // as is_waste=true. The wastage now sits inside the chosen client's
+    // bucket instead of floating orphaned with client_id=NULL.
+    if (mode === 'waste' && assignedIds.length > 0) {
+      await Promise.all(
+        assignedIds.map(async (gid) => {
           const res = await fetch(`/api/generations/${gid}/waste`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -281,16 +293,19 @@ export function SyncAndAssign({
           })
           if (!res.ok) {
             const d = await res.json().catch(() => ({}))
-            failures.push(`${gid.slice(0, 8)}: ${d?.error || res.statusText}`)
+            failures.push(
+              `${gid.slice(0, 8)} (waste): ${d?.error || res.statusText}`,
+            )
           }
         }),
       )
-      void results
     }
 
     setBatchBusy(null)
-    if (failures.length > 0 && failures.length === ids.length) {
-      setBatchError(`All ${failures.length} failed: ${failures.slice(0, 3).join('; ')}`)
+    if (failures.length > 0 && assignedIds.length === 0) {
+      setBatchError(
+        `All ${failures.length} failed: ${failures.slice(0, 3).join('; ')}`,
+      )
       return
     }
     if (failures.length > 0) {
@@ -298,13 +313,15 @@ export function SyncAndAssign({
         `${failures.length} of ${ids.length} failed: ${failures.slice(0, 3).join('; ')}`,
       )
     }
-    // Refresh and close — close picker too because those rows are gone now.
+
     setDestOpen(false)
     setPickerOpen(false)
     setSelectedIds(new Set())
-    // Wrap in a transition so the action buttons stay disabled until the
-    // server-rendered Assigned/Wastage tables actually update.
+    // Navigate the master to the destination client's page — that's where
+    // the assigned (or wasted) generations now live. Wrapped in a
+    // transition so the modal buttons stay disabled through navigation.
     startTransition(() => {
+      router.push(`/app/clients/${targetClientId}`)
       router.refresh()
     })
   }
