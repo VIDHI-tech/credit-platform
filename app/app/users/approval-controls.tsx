@@ -83,11 +83,18 @@ export function ApprovalControls({ membershipId, userRole, connections }: Approv
 
   async function handleReject() {
     setBusy(true)
+    setError(null)
     const supabase = createClient()
-    await supabase
+    const { error: err } = await supabase
       .from('memberships')
       .update({ status: 'rejected' })
       .eq('id', membershipId)
+    if (err) {
+      setError(err.message)
+      setBusy(false)
+      return
+    }
+    setBusy(false)
     router.refresh()
   }
 
@@ -139,8 +146,11 @@ export function ApprovalControls({ membershipId, userRole, connections }: Approv
           disabled={busy}
           className="h-8 text-red-400 border-red-900 hover:bg-red-950"
         >
-          Reject
+          {busy ? 'Rejecting…' : 'Reject'}
         </Button>
+        {error && !dialogOpen && (
+          <span className="text-xs text-red-400 ml-2">{error}</span>
+        )}
       </div>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>

@@ -167,7 +167,7 @@ export function MemberControls({
                 disabled={busy}
                 className="bg-red-700 hover:bg-red-600 text-white"
               >
-                Remove
+                {busy ? 'Removing…' : 'Remove'}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>

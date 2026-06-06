@@ -77,6 +77,7 @@ function UnassignButton({
   userRole,
   userId,
   onDone,
+  onError,
 }: {
   generationId: string
   assignedAt: string | null
@@ -84,6 +85,7 @@ function UnassignButton({
   userRole: string
   userId: string
   onDone: () => void
+  onError: (msg: string) => void
 }) {
   const [busy, setBusy] = useState(false)
   const [timeLeft, setTimeLeft] = useState<number | null>(null)
@@ -115,11 +117,21 @@ function UnassignButton({
 
   async function handleUnassign() {
     setBusy(true)
-    const res = await fetch(`/api/generations/${generationId}/unassign`, {
-      method: 'POST',
-    })
-    setBusy(false)
-    if (res.ok) onDone()
+    try {
+      const res = await fetch(`/api/generations/${generationId}/unassign`, {
+        method: 'POST',
+      })
+      if (res.ok) {
+        onDone()
+      } else {
+        const data = await res.json().catch(() => ({}))
+        onError(`Unassign failed: ${data.error || 'unknown error'}`)
+      }
+    } catch (err) {
+      onError(`Unassign failed: ${err instanceof Error ? err.message : 'network error'}`)
+    } finally {
+      setBusy(false)
+    }
   }
 
   return (
@@ -142,6 +154,7 @@ function WastageButton({
   userRole,
   userId,
   onDone,
+  onError,
 }: {
   generationId: string
   wastedAt: string | null
@@ -149,6 +162,7 @@ function WastageButton({
   userRole: string
   userId: string
   onDone: () => void
+  onError: (msg: string) => void
 }) {
   const [busy, setBusy] = useState(false)
   const [timeLeft, setTimeLeft] = useState<number | null>(null)
@@ -177,13 +191,23 @@ function WastageButton({
 
   async function handleToggleWaste() {
     setBusy(true)
-    const res = await fetch(`/api/generations/${generationId}/waste`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ is_waste: !isWasted }),
-    })
-    setBusy(false)
-    if (res.ok) onDone()
+    try {
+      const res = await fetch(`/api/generations/${generationId}/waste`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_waste: !isWasted }),
+      })
+      if (res.ok) {
+        onDone()
+      } else {
+        const data = await res.json().catch(() => ({}))
+        onError(`Mark Useful failed: ${data.error || 'unknown error'}`)
+      }
+    } catch (err) {
+      onError(`Mark Useful failed: ${err instanceof Error ? err.message : 'network error'}`)
+    } finally {
+      setBusy(false)
+    }
   }
 
   if (!isWasted) return null
@@ -457,6 +481,7 @@ export function AssignTables({
                           userRole={userRole}
                           userId={userId}
                           onDone={() => router.refresh()}
+                          onError={(msg) => setError(msg)}
                         />
                       </td>
                     </tr>
@@ -529,6 +554,7 @@ export function AssignTables({
                           userRole={userRole}
                           userId={userId}
                           onDone={() => router.refresh()}
+                          onError={(msg) => setError(msg)}
                         />
                       </td>
                     </tr>
