@@ -24,6 +24,8 @@ export function VideoTypesSection({ initialTypes }: Props) {
   const [adding, setAdding] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editName, setEditName] = useState('')
+  const [savingId, setSavingId] = useState<string | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -66,6 +68,8 @@ export function VideoTypesSection({ initialTypes }: Props) {
 
   async function handleRename(id: string) {
     if (!editName.trim()) { setEditingId(null); return }
+    setSavingId(id)
+    setError(null)
     try {
       const { error: e } = await supabase
         .from('video_types')
@@ -77,17 +81,23 @@ export function VideoTypesSection({ initialTypes }: Props) {
       router.refresh()
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Rename failed')
+    } finally {
+      setSavingId(null)
     }
   }
 
   async function handleDelete(id: string, name: string) {
     if (!confirm(`Delete video type "${name}"? Works that used this type will still show the name as text.`)) return
+    setDeletingId(id)
+    setError(null)
     try {
       const { error: e } = await supabase.from('video_types').delete().eq('id', id)
       if (e) throw e
       setTypes(prev => prev.filter(t => t.id !== id))
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Delete failed')
+    } finally {
+      setDeletingId(null)
     }
   }
 
@@ -132,14 +142,45 @@ export function VideoTypesSection({ initialTypes }: Props) {
                         if (e.key === 'Escape') setEditingId(null)
                       }}
                     />
-                    <Button size="sm" onClick={() => handleRename(t.id)} className="h-7 bg-lime-400 text-black hover:bg-lime-300">Save</Button>
-                    <Button size="sm" variant="ghost" onClick={() => setEditingId(null)} className="h-7">Cancel</Button>
+                    <Button
+                      size="sm"
+                      onClick={() => handleRename(t.id)}
+                      disabled={savingId === t.id}
+                      className="h-7 bg-lime-400 text-black hover:bg-lime-300"
+                    >
+                      {savingId === t.id ? 'Saving…' : 'Save'}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setEditingId(null)}
+                      disabled={savingId === t.id}
+                      className="h-7"
+                    >
+                      Cancel
+                    </Button>
                   </>
                 ) : (
                   <>
                     <span className="flex-1 text-sm text-white">{t.name}</span>
-                    <Button size="sm" variant="ghost" onClick={() => startEdit(t)} className="h-7 text-neutral-400 hover:text-white">Rename</Button>
-                    <Button size="sm" variant="ghost" onClick={() => handleDelete(t.id, t.name)} className="h-7 text-red-400 hover:text-red-300">Delete</Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => startEdit(t)}
+                      disabled={deletingId === t.id}
+                      className="h-7 text-neutral-400 hover:text-white"
+                    >
+                      Rename
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => handleDelete(t.id, t.name)}
+                      disabled={deletingId === t.id}
+                      className="h-7 text-red-400 hover:text-red-300"
+                    >
+                      {deletingId === t.id ? 'Deleting…' : 'Delete'}
+                    </Button>
                   </>
                 )}
               </li>
