@@ -302,8 +302,13 @@ export function AssignTables({
   const assignedToThisWork = assignedUseful.filter((g) => g.work_id === workId)
   const assignedElsewhere = assignedUseful.filter((g) => g.work_id !== workId)
 
+  // The Rework tag is a CROSS-WORK signal: it flags a row whose source
+  // work is in 'rework' status AND is DIFFERENT from the work we're viewing.
+  // The current work's own status already lives in the header status badge,
+  // so re-stamping every row would be redundant noise.
   function renderReworkTag(genWorkId: string | null) {
     if (!genWorkId) return null
+    if (genWorkId === workId) return null
     const status = workStatusMap[genWorkId]
     if (status !== 'rework') return null
     return (
