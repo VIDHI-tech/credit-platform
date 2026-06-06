@@ -37,10 +37,17 @@ export function decrypt(blob: string): string {
   if (!ivB64 || !tagB64 || !dataB64) {
     throw new Error('Malformed encrypted token')
   }
-  const decipher = createDecipheriv(ALGO, key, Buffer.from(ivB64, 'base64'))
-  decipher.setAuthTag(Buffer.from(tagB64, 'base64'))
-  return Buffer.concat([
-    decipher.update(Buffer.from(dataB64, 'base64')),
-    decipher.final(),
-  ]).toString('utf8')
+  try {
+    const decipher = createDecipheriv(ALGO, key, Buffer.from(ivB64, 'base64'))
+    decipher.setAuthTag(Buffer.from(tagB64, 'base64'))
+    return Buffer.concat([
+      decipher.update(Buffer.from(dataB64, 'base64')),
+      decipher.final(),
+    ]).toString('utf8')
+  } catch {
+    throw new Error(
+      'Token decryption failed — HF_TOKEN_ENC_KEY does not match the key used when this account was connected. ' +
+      'Either set the original key in your environment, or remove and re-connect the HF account.'
+    )
+  }
 }
