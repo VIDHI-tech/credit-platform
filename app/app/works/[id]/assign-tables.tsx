@@ -19,6 +19,7 @@ interface Generation {
   is_waste: boolean
   wasted_at: string | null
   wasted_by: string | null
+  hf_connection_label: string | null
 }
 
 interface Props {
@@ -336,6 +337,11 @@ export function AssignTables({
                         <div className="font-medium text-white">
                           {g.display_name}
                         </div>
+                        {g.hf_connection_label && (
+                          <div className="text-xs text-neutral-500 mt-0.5">
+                            from <span className="text-lime-400">{g.hf_connection_label}</span>
+                          </div>
+                        )}
                       </td>
                       <td className="px-2 py-2 text-right">
                         <span
@@ -410,16 +416,23 @@ export function AssignTables({
                         <div className="font-medium text-white">
                           {g.display_name}
                         </div>
-                        <div className="text-neutral-500 text-xs">
-                          {g.work_id === workId ? (
-                            <Badge
-                              variant="outline"
-                              className="text-lime-300 border-lime-700 text-xs"
-                            >
-                              This work
-                            </Badge>
-                          ) : (
-                            <span className="text-neutral-600">other work</span>
+                        <div className="text-neutral-500 text-xs mt-0.5 space-y-0.5">
+                          <div>
+                            {g.work_id === workId ? (
+                              <Badge
+                                variant="outline"
+                                className="text-lime-300 border-lime-700 text-xs"
+                              >
+                                This work
+                              </Badge>
+                            ) : (
+                              <span className="text-neutral-600">other work</span>
+                            )}
+                          </div>
+                          {g.hf_connection_label && (
+                            <div className="text-neutral-500 text-xs">
+                              from <span className="text-lime-400">{g.hf_connection_label}</span>
+                            </div>
                           )}
                         </div>
                       </td>
@@ -486,8 +499,15 @@ export function AssignTables({
                         <div className="font-medium text-neutral-400 line-through">
                           {g.display_name}
                         </div>
-                        <div className="text-xs text-neutral-600 mt-0.5">
-                          Marked {g.wasted_at ? new Date(g.wasted_at).toLocaleTimeString() : ''}
+                        <div className="text-xs text-neutral-600 mt-0.5 space-y-0.5">
+                          <div>
+                            Marked {g.wasted_at ? new Date(g.wasted_at).toLocaleTimeString() : ''}
+                          </div>
+                          {g.hf_connection_label && (
+                            <div className="text-neutral-600">
+                              from <span className="text-red-400">{g.hf_connection_label}</span>
+                            </div>
+                          )}
                         </div>
                       </td>
                       <td className="px-2 py-2 text-right">

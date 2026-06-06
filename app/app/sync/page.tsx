@@ -30,6 +30,7 @@ interface Generation {
   credits: string
   hf_created_at: string
   client_id: string | null
+  hf_connection_label: string | null
 }
 
 interface ClientTotal {
@@ -297,6 +298,11 @@ export default function SyncPage() {
                         <div className="font-medium text-white text-xs">
                           {gen.display_name}
                         </div>
+                        {gen.hf_connection_label && (
+                          <div className="text-lime-400 text-xs mt-0.5 font-medium">
+                            {gen.hf_connection_label}
+                          </div>
+                        )}
                         {gen.prompt && (
                           <div className="text-neutral-500 text-xs mt-0.5 line-clamp-2 max-w-[140px]">
                             {gen.prompt}

@@ -55,14 +55,14 @@ export default async function WorkDetailPage({ params }: PageProps) {
     supabase
       .from("generations")
       .select(
-        "id, display_name, result_url, media_type, credits, hf_created_at, work_id, assigned_at, assigned_by, is_waste",
+        "id, display_name, result_url, media_type, credits, hf_created_at, work_id, assigned_at, assigned_by, is_waste, hf_connection_label",
       )
       .is("client_id", null)
       .order("hf_created_at", { ascending: false }),
     supabase
       .from("generations")
       .select(
-        "id, display_name, result_url, media_type, credits, hf_created_at, work_id, assigned_at, assigned_by, is_waste",
+        "id, display_name, result_url, media_type, credits, hf_created_at, work_id, assigned_at, assigned_by, is_waste, hf_connection_label",
       )
       .eq("client_id", work.client_id)
       .order("hf_created_at", { ascending: false }),

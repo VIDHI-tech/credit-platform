@@ -52,6 +52,7 @@ export async function POST() {
       (r.data || []).map((g) => ({
         org_id: membership.org_id,
         hf_connection_id: r.connectionId,
+        hf_connection_label: r.label,
         external_id: g.externalId,
         display_name: g.displayName,
         job_set_type: g.jobSetType,
