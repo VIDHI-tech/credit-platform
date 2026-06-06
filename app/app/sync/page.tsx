@@ -94,6 +94,7 @@ export default function SyncPage() {
   const [assigning, setAssigning] = useState<string | null>(null)
   const [userRole, setUserRole] = useState<string>('creator')
   const [accessibleAccounts, setAccessibleAccounts] = useState<AccessibleAccount[]>([])
+  const [selectedAccountFilter, setSelectedAccountFilter] = useState<string | null>(null)
 
   // One client instance for the component's lifetime (avoids re-running effects).
   const [supabase] = useState(() => createClient())
@@ -354,9 +355,46 @@ export default function SyncPage() {
               variant="outline"
               className="text-yellow-400 border-yellow-700"
             >
-              {unassigned.length} pending
+              {(selectedAccountFilter
+                ? unassigned.filter(g => g.hf_connection_label === selectedAccountFilter)
+                : unassigned
+              ).length} pending
             </Badge>
           </div>
+
+          {/* ACCOUNT FILTER */}
+          {accessibleAccounts.length > 0 && (
+            <div className="px-4 py-2 border-b border-neutral-800 bg-neutral-900/50 flex flex-wrap gap-2 items-center">
+              <span className="text-xs text-neutral-500">Filter by account:</span>
+              <button
+                type="button"
+                onClick={() => setSelectedAccountFilter(null)}
+                className={`text-xs px-2 py-1 rounded transition-colors ${
+                  selectedAccountFilter === null
+                    ? 'bg-lime-400 text-black'
+                    : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'
+                }`}
+              >
+                All
+              </button>
+              {accessibleAccounts.map(acc => (
+                <button
+                  key={acc.id}
+                  type="button"
+                  onClick={() => setSelectedAccountFilter(acc.label)}
+                  className={`text-xs px-2 py-1 rounded transition-colors ${
+                    selectedAccountFilter === acc.label
+                      ? 'bg-lime-400 text-black'
+                      : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'
+                  }`}
+                  title={acc.hf_email || ''}
+                >
+                  {acc.label}
+                </button>
+              ))}
+            </div>
+          )}
+
           {unassigned.length === 0 ? (
             <div className="p-8 text-center text-neutral-500">
               <p>No unassigned generations.</p>
@@ -382,7 +420,10 @@ export default function SyncPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-neutral-800">
-                  {unassigned.map((gen) => (
+                  {(selectedAccountFilter
+                    ? unassigned.filter(g => g.hf_connection_label === selectedAccountFilter)
+                    : unassigned
+                  ).map((gen) => (
                     <tr key={gen.id} className="hover:bg-neutral-900/60">
                       <td className="px-3 py-2">
                         <MediaPreview
