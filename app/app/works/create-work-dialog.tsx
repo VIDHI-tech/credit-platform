@@ -260,7 +260,7 @@ function WorkForm({
         )
       }
 
-      // Co-owners (skip duplicates of the primary).
+      // Co-owners go into the work_creators join table.
       const creatorRows = creatorIds.map((uid) => ({
         work_id: workId,
         user_id: uid,
@@ -269,11 +269,22 @@ function WorkForm({
       const { error: wcErr } = await supabase
         .from('work_creators')
         .insert(creatorRows)
+
+      // If only the join-table insert failed, the work still exists with the
+      // primary creator_id intact — so we'd rather forward the user to the
+      // detail page than block. Surface the partial failure as a non-fatal
+      // warning in the dialog before navigating so the master knows to use
+      // Edit Work to retry the co-owners.
       if (wcErr) {
         console.error('[create-work] work_creators insert failed:', wcErr)
-        // Don't roll back the work — the primary creator_id row is
-        // preserved on works, and the master can re-add co-owners via
-        // the edit dialog.
+        setError(
+          `Work created, but co-owner setup failed (${wcErr.message}). ` +
+            `Open the work and use Edit to add ${
+              creatorIds.length - 1
+            } co-owner${creatorIds.length - 1 === 1 ? '' : 's'} manually.`,
+        )
+        // Don't redirect — let the user read the message and decide.
+        return
       }
 
       onOpenChange(false)

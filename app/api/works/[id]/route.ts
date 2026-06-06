@@ -73,10 +73,10 @@ export async function PATCH(
       }
     }
 
-    // Sync work_creators: full replace. Clients pass the complete list
-    // (primary first); we wipe and re-insert. The composite PK on
-    // (work_id, user_id) plus ON CONFLICT DO NOTHING protects against
-    // duplicates.
+    // Sync work_creators: INSERT-then-DELETE-orphans (safer than
+    // DELETE-then-INSERT). If the INSERT fails the join table stays as
+    // it was. If the DELETE-orphans step fails afterwards, the table
+    // simply has extra rows — never zero rows.
     if (incomingCreatorIds) {
       if (incomingCreatorIds.length === 0) {
         return NextResponse.json(
@@ -84,13 +84,8 @@ export async function PATCH(
           { status: 400 },
         )
       }
-      const { error: delErr } = await supabase
-        .from('work_creators')
-        .delete()
-        .eq('work_id', id)
-      if (delErr) {
-        return NextResponse.json({ error: delErr.message }, { status: 500 })
-      }
+      // Step 1 — INSERT the desired set with upsert semantics. Composite
+      // PK (work_id, user_id) makes ignoreDuplicates safe.
       const rows = incomingCreatorIds.map((uid) => ({
         work_id: id,
         user_id: uid,
@@ -98,9 +93,38 @@ export async function PATCH(
       }))
       const { error: insErr } = await supabase
         .from('work_creators')
-        .insert(rows)
+        .upsert(rows, { onConflict: 'work_id,user_id', ignoreDuplicates: true })
       if (insErr) {
         return NextResponse.json({ error: insErr.message }, { status: 500 })
+      }
+      // Step 2 — fetch current rows, compute the orphan diff client-side,
+      // then delete by an explicit id list (cleaner than NOT IN with raw
+      // SQL fragments since UUID quoting in PostgREST filters is fiddly).
+      // If this step fails we still have all the requested creators
+      // present, plus some stale ones — never zero.
+      const desiredSet = new Set(incomingCreatorIds)
+      const { data: currentRows } = await supabase
+        .from('work_creators')
+        .select('user_id')
+        .eq('work_id', id)
+      const orphanIds = (currentRows || [])
+        .map((r) => r.user_id as string)
+        .filter((uid) => !desiredSet.has(uid))
+      if (orphanIds.length > 0) {
+        const { error: delErr } = await supabase
+          .from('work_creators')
+          .delete()
+          .eq('work_id', id)
+          .in('user_id', orphanIds)
+        if (delErr) {
+          return NextResponse.json(
+            {
+              success: true,
+              warning: `Co-owners updated, but couldn't remove the old ones: ${delErr.message}`,
+            },
+            { status: 200 },
+          )
+        }
       }
     }
 
