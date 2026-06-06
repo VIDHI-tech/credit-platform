@@ -47,11 +47,24 @@ interface ClientOption {
   name: string
 }
 
+export interface CreatorStat {
+  userId: string
+  name: string
+  /** credits on THIS work that are not waste */
+  actual: number
+  /** credits on THIS work that are waste */
+  wastage: number
+  /** credits on any work currently in 'rework' status (for this client) */
+  rework: number
+}
+
 interface Props {
   workId: string
   clientId: string
   clientName: string
   userRole: 'master' | 'manager' | 'creator'
+  /** Per-creator credit breakdown rendered above the Sync button. */
+  creatorStats: CreatorStat[]
 }
 
 function MediaPreview({
@@ -84,7 +97,13 @@ function MediaPreview({
   )
 }
 
-export function SyncAndAssign({ workId, clientId, clientName, userRole }: Props) {
+export function SyncAndAssign({
+  workId,
+  clientId,
+  clientName,
+  userRole,
+  creatorStats,
+}: Props) {
   const router = useRouter()
   const [supabase] = useState(() => createClient())
 
@@ -300,7 +319,9 @@ export function SyncAndAssign({ workId, clientId, clientName, userRole }: Props)
             attribute to a client.
           </p>
         </div>
-        <div className="flex-1 flex flex-col items-center justify-center px-6 py-8 gap-4">
+
+        {/* SYNC BUTTON */}
+        <div className="flex flex-col items-center px-6 py-5 gap-3 border-b border-neutral-800">
           <Button
             onClick={handleSync}
             disabled={syncing || isPending}
@@ -325,7 +346,7 @@ export function SyncAndAssign({ workId, clientId, clientName, userRole }: Props)
             </p>
           )}
           {syncError && (
-            <div className="bg-red-950/50 border border-red-800 text-red-300 px-3 py-2 rounded text-xs flex items-center justify-between gap-2 max-w-md">
+            <div className="bg-red-950/50 border border-red-800 text-red-300 px-3 py-2 rounded text-xs flex items-center justify-between gap-2 max-w-md w-full">
               <span>{syncError}</span>
               {syncError.includes('Settings') && (
                 <a
@@ -335,6 +356,51 @@ export function SyncAndAssign({ workId, clientId, clientName, userRole }: Props)
                   Open Settings →
                 </a>
               )}
+            </div>
+          )}
+        </div>
+
+        {/* PER-CREATOR STATS */}
+        <div className="flex-1 overflow-auto">
+          <div className="px-4 py-3 border-b border-neutral-800 flex items-center justify-between">
+            <h3 className="text-xs font-semibold text-white uppercase tracking-wider">
+              Credit breakdown by user
+            </h3>
+            <span className="text-[10px] text-neutral-500">
+              On {clientName}
+            </span>
+          </div>
+          {creatorStats.length === 0 ? (
+            <div className="p-6 text-center text-neutral-500 text-xs">
+              No credits attributed by anyone yet.
+            </div>
+          ) : (
+            <div className="divide-y divide-neutral-800">
+              <div className="px-4 py-1.5 grid grid-cols-[1fr_repeat(3,minmax(0,4rem))] gap-2 text-[10px] uppercase tracking-wider text-neutral-500">
+                <div>User</div>
+                <div className="text-right text-lime-400">Actual</div>
+                <div className="text-right text-yellow-400">Wastage</div>
+                <div className="text-right text-orange-400">Rework</div>
+              </div>
+              {creatorStats.map((s) => (
+                <div
+                  key={s.userId}
+                  className="px-4 py-2 grid grid-cols-[1fr_repeat(3,minmax(0,4rem))] gap-2 items-center text-xs"
+                >
+                  <div className="min-w-0 truncate font-medium text-white">
+                    {s.name}
+                  </div>
+                  <div className="text-right font-mono text-lime-300">
+                    {s.actual > 0 ? s.actual.toFixed(1) : '—'}
+                  </div>
+                  <div className="text-right font-mono text-yellow-300">
+                    {s.wastage > 0 ? s.wastage.toFixed(1) : '—'}
+                  </div>
+                  <div className="text-right font-mono text-orange-300">
+                    {s.rework > 0 ? s.rework.toFixed(1) : '—'}
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>

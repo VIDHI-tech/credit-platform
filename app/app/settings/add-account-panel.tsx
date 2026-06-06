@@ -4,10 +4,13 @@ import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Copy, Check } from 'lucide-react'
 
 type Step = 'idle' | 'starting' | 'waiting' | 'error'
 
 // Inline (non-modal) "add Higgsfield account" flow. Expands below the button.
+// The login link is shown as a copyable URL — the master copies it into a new
+// tab manually (no auto-window.open). Polling auto-detects completion.
 export function AddAccountPanel({
   onDone,
   onCancel,
@@ -18,6 +21,7 @@ export function AddAccountPanel({
   const [step, setStep] = useState<Step>('idle')
   const [label, setLabel] = useState('')
   const [verificationUri, setVerificationUri] = useState('')
+  const [copied, setCopied] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const cancelled = useRef(false)
@@ -60,24 +64,6 @@ export function AddAccountPanel({
     }, intervalSec * 1000)
   }
 
-  async function handleImportCli() {
-    setError(null)
-    setStep('starting')
-    try {
-      const res = await fetch('/api/hf/connect/import-cli', { method: 'POST' })
-      const d = await res.json()
-      if (!res.ok) {
-        setError(d.error || 'Import failed')
-        setStep('error')
-        return
-      }
-      onDone()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Import failed')
-      setStep('error')
-    }
-  }
-
   async function handleStart() {
     setError(null)
     setStep('starting')
@@ -91,11 +77,23 @@ export function AddAccountPanel({
       }
       setVerificationUri(d.verification_uri)
       setStep('waiting')
-      window.open(d.verification_uri, '_blank', 'noopener')
       schedulePoll(d.device_code, d.interval || 3)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to start login')
       setStep('error')
+    }
+  }
+
+  async function handleCopy() {
+    if (!verificationUri) return
+    try {
+      await navigator.clipboard.writeText(verificationUri)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      // Fallback: select the input so user can copy manually
+      const el = document.getElementById('hf-verification-uri') as HTMLInputElement | null
+      el?.select()
     }
   }
 
@@ -129,46 +127,65 @@ export function AddAccountPanel({
             />
           </div>
           <p className="text-xs text-neutral-500">
-            A Higgsfield login opens in a new tab. Sign in as the account you
-            want to connect and approve — this panel finishes automatically.
+            Click the button below to generate a Higgsfield login link. Copy
+            the link and paste it into a new browser tab as the account you
+            want to connect — this panel auto-finishes once you approve.
           </p>
-          <div className="flex flex-wrap items-center gap-3">
-            <Button
-              onClick={handleStart}
-              disabled={step === 'starting'}
-              className="bg-lime-400 hover:bg-lime-300 text-black font-semibold"
-            >
-              {step === 'starting' ? 'Starting…' : 'Start Higgsfield login'}
-            </Button>
-            <button
-              onClick={handleImportCli}
-              disabled={step === 'starting'}
-              className="text-xs text-neutral-400 hover:text-white underline underline-offset-2 disabled:opacity-50"
-            >
-              or use the CLI login on this machine
-            </button>
-          </div>
+          <Button
+            onClick={handleStart}
+            disabled={step === 'starting'}
+            className="bg-lime-400 hover:bg-lime-300 text-black font-semibold"
+          >
+            {step === 'starting' ? 'Starting…' : 'Start Higgsfield login'}
+          </Button>
         </div>
       )}
 
       {step === 'waiting' && (
-        <div className="space-y-2 text-sm">
-          <div className="flex items-center gap-2 text-lime-300">
+        <div className="space-y-3">
+          <div className="flex items-center gap-2 text-sm text-lime-300">
             <span className="inline-block size-2 rounded-full bg-lime-400 animate-pulse" />
-            Waiting for you to approve in the Higgsfield tab…
+            Waiting for you to approve…
           </div>
-          <p className="text-neutral-400 text-xs">
-            Tab didn&apos;t open?{' '}
-            <a
-              href={verificationUri}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-lime-400 hover:underline"
-            >
-              Open the Higgsfield login
-            </a>
-            .
-          </p>
+
+          <div>
+            <Label className="text-neutral-300 text-xs">
+              Higgsfield login link
+            </Label>
+            <div className="mt-1 flex gap-2">
+              <Input
+                id="hf-verification-uri"
+                value={verificationUri}
+                readOnly
+                onFocus={(e) => e.currentTarget.select()}
+                className="flex-1 bg-neutral-900 border-neutral-700 text-white font-mono text-xs"
+              />
+              <Button
+                type="button"
+                onClick={handleCopy}
+                variant="outline"
+                className="shrink-0 border-neutral-700 text-neutral-300 hover:bg-neutral-800"
+                title="Copy link"
+              >
+                {copied ? (
+                  <>
+                    <Check className="size-4 mr-1 text-lime-400" />
+                    Copied
+                  </>
+                ) : (
+                  <>
+                    <Copy className="size-4 mr-1" />
+                    Copy
+                  </>
+                )}
+              </Button>
+            </div>
+            <p className="text-xs text-neutral-500 mt-2">
+              Open a new browser tab, paste the link above, and sign in as the
+              Higgsfield account you want to connect. We&apos;ll detect the
+              approval automatically — no need to come back here manually.
+            </p>
+          </div>
         </div>
       )}
 

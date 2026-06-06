@@ -365,19 +365,11 @@ export function AssignTables({
                           {g.display_name}
                         </div>
                         <div className="text-neutral-500 text-xs mt-0.5 space-y-0.5">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            {g.work_id === workId ? (
-                              <Badge
-                                variant="outline"
-                                className="text-lime-300 border-lime-700 text-xs"
-                              >
-                                This work
-                              </Badge>
-                            ) : (
-                              <span className="text-neutral-600">other work</span>
-                            )}
-                            {renderReworkTag(g.work_id)}
-                          </div>
+                          {renderReworkTag(g.work_id) && (
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              {renderReworkTag(g.work_id)}
+                            </div>
+                          )}
                           {g.hf_connection_label && (
                             <div className="text-neutral-500 text-xs">
                               from{' '}

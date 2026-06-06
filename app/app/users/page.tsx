@@ -1,17 +1,25 @@
 // app/app/users/page.tsx — master (full control) + manager (read-only).
+// HF account access is rendered INLINE in every active member row
+// (master only); the standalone Higgsfield Account Access section was
+// removed in favor of that inline UX.
 import { requireRole } from '@/lib/auth-helpers'
 import { createClient } from '@/lib/supabase-server'
-import { can } from '@/lib/rbac'
 import { ApprovalControls } from './approval-controls'
-import { AccountGrantsManager } from './account-grants-manager'
 import { MemberControls } from './member-controls'
+import { MemberHfAccess } from './member-hf-access'
 import { InviteUserSection } from './invite-user-section'
 
 export default async function UsersPage() {
   const membership = await requireRole(['master', 'manager'])
   const supabase = await createClient()
 
-  const [{ data: pending }, { data: active }, { data: connections }, { data: grants }, { data: invitations }] = await Promise.all([
+  const [
+    { data: pending },
+    { data: active },
+    { data: connections },
+    { data: grants },
+    { data: invitations },
+  ] = await Promise.all([
     supabase
       .from('memberships')
       .select('id, user_id, full_name, requested_at')
@@ -40,8 +48,18 @@ export default async function UsersPage() {
       .order('created_at', { ascending: false }),
   ])
 
-  const creators = (active || []).filter((m) => m.role === 'creator')
   const masterCount = (active || []).filter((m) => m.role === 'master').length
+
+  const connectionsList = (connections || []).map((c) => ({
+    id: c.id,
+    label: c.label,
+    hf_email: c.hf_email,
+  }))
+  const grantsList = (grants || []).map((g) => ({
+    id: g.id,
+    connection_id: g.connection_id,
+    user_id: g.user_id,
+  }))
 
   return (
     <div className="p-6 space-y-8 text-neutral-100">
@@ -56,12 +74,8 @@ export default async function UsersPage() {
       {membership.role === 'master' && (
         <InviteUserSection
           orgId={membership.org_id}
-          connections={(connections || []).map((c) => ({
-            id: c.id,
-            label: c.label,
-            hf_email: c.hf_email,
-          }))}
-          initialInvitations={(invitations || []).map(i => ({
+          connections={connectionsList}
+          initialInvitations={(invitations || []).map((i) => ({
             id: i.id,
             email: i.email,
             role: i.role,
@@ -98,11 +112,7 @@ export default async function UsersPage() {
                 <ApprovalControls
                   membershipId={p.id}
                   userRole={membership.role}
-                  connections={(connections || []).map((c) => ({
-                    id: c.id,
-                    label: c.label,
-                    hf_email: c.hf_email,
-                  }))}
+                  connections={connectionsList}
                 />
               </div>
             ))}
@@ -110,10 +120,19 @@ export default async function UsersPage() {
         )}
       </section>
 
-      {/* ACTIVE */}
-      <section className="bg-neutral-950 border border-neutral-800 rounded-lg overflow-hidden">
+      {/* ACTIVE — each row carries inline HF account access (master only).
+          overflow-visible so the per-row HF-grants popover isn't clipped. */}
+      <section className="bg-neutral-950 border border-neutral-800 rounded-lg">
         <div className="px-4 py-3 border-b border-neutral-800 flex items-center justify-between">
-          <h2 className="font-semibold text-white">Active Members</h2>
+          <div>
+            <h2 className="font-semibold text-white">Active Members</h2>
+            {membership.role === 'master' && connectionsList.length > 0 && (
+              <p className="text-xs text-neutral-500 mt-0.5">
+                The K / N HF pill on each row controls which Higgsfield accounts
+                that member can sync from.
+              </p>
+            )}
+          </div>
           <span className="text-green-400 text-sm">{active?.length || 0}</span>
         </div>
         <div className="divide-y divide-neutral-800">
@@ -124,57 +143,42 @@ export default async function UsersPage() {
             return (
               <div
                 key={a.id}
-                className="px-4 py-3 flex items-center justify-between gap-4"
+                className="relative px-4 py-3 flex items-center justify-between gap-4"
               >
                 <div className="min-w-0">
                   <div className="font-medium text-white flex items-center gap-2">
                     {a.full_name}
+                    <span className="text-[10px] uppercase tracking-wider text-neutral-500">
+                      {role}
+                    </span>
                   </div>
                   <div className="text-xs text-neutral-500">
                     Joined {new Date(a.approved_at).toLocaleDateString('en-US')}
                   </div>
                 </div>
-                <MemberControls
-                  membershipId={a.id}
-                  currentRole={role}
-                  userRole={membership.role}
-                  fullName={a.full_name}
-                  isYou={isYou}
-                  isLastMaster={isLastMaster}
-                />
+                <div className="flex items-center gap-3">
+                  {membership.role === 'master' && (
+                    <MemberHfAccess
+                      orgId={membership.org_id}
+                      memberUserId={a.user_id}
+                      enabled={role !== 'master'}
+                      connections={connectionsList}
+                      initialGrants={grantsList}
+                    />
+                  )}
+                  <MemberControls
+                    membershipId={a.id}
+                    currentRole={role}
+                    userRole={membership.role}
+                    fullName={a.full_name}
+                    isYou={isYou}
+                    isLastMaster={isLastMaster}
+                  />
+                </div>
               </div>
             )
           })}
         </div>
-      </section>
-
-      {/* HF ACCOUNT ACCESS */}
-      <section className="bg-neutral-950 border border-neutral-800 rounded-lg overflow-hidden">
-        <div className="px-4 py-3 border-b border-neutral-800">
-          <h2 className="font-semibold text-white">Higgsfield Account Access</h2>
-          <p className="text-xs text-neutral-500 mt-0.5">
-            Control which HF accounts each creator can use. Expand a creator to
-            toggle individual accounts.
-          </p>
-        </div>
-        <AccountGrantsManager
-          orgId={membership.org_id}
-          connections={(connections || []).map((c) => ({
-            id: c.id,
-            label: c.label,
-            hf_email: c.hf_email,
-          }))}
-          creators={creators.map((c) => ({
-            id: c.id,
-            user_id: c.user_id,
-            full_name: c.full_name,
-          }))}
-          grants={(grants || []).map((g) => ({
-            id: g.id,
-            connection_id: g.connection_id,
-            user_id: g.user_id,
-          }))}
-        />
       </section>
     </div>
   )

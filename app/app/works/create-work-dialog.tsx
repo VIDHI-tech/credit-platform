@@ -215,8 +215,8 @@ function WorkForm({
       // Generate work ID client-side so storage path can use it before insert.
       const workId = crypto.randomUUID()
 
-      // Instructions: prefer uploaded file; fall back to inline text (saved
-      // as a .txt blob in the same bucket so the existing viewer works).
+      // Instructions: file (if any) → instructions_path; text (if any) → notes.
+      // Both fields are independent; the user can supply one, the other, or both.
       let instructionsPath: string | null = null
       if (instructionsFile) {
         const filename = `instructions${instructionsFile.name.endsWith('.md') ? '.md' : '.txt'}`
@@ -224,14 +224,6 @@ function WorkForm({
         const { error: uploadError } = await supabase.storage
           .from('work-instructions')
           .upload(instructionsPath, instructionsFile)
-        if (uploadError) throw new Error(`Upload failed: ${uploadError.message}`)
-      } else if (instructionsText.trim()) {
-        const filename = 'instructions.txt'
-        instructionsPath = `${membership.org_id}/${workId}/${filename}`
-        const blob = new Blob([instructionsText.trim()], { type: 'text/plain' })
-        const { error: uploadError } = await supabase.storage
-          .from('work-instructions')
-          .upload(instructionsPath, blob, { contentType: 'text/plain' })
         if (uploadError) throw new Error(`Upload failed: ${uploadError.message}`)
       }
 
@@ -244,6 +236,7 @@ function WorkForm({
         video_type: videoType || null,
         max_credits: maxCredits ? parseFloat(maxCredits) : null,
         instructions_path: instructionsPath,
+        notes: instructionsText.trim() || null,
         start_date: dateRange?.from ? toIsoDate(dateRange.from) : null,
         end_date: dateRange?.to ? toIsoDate(dateRange.to) : null,
         start_time: startTime || null,
@@ -519,8 +512,8 @@ function WorkForm({
         <div className="space-y-4 py-2">
           <p className="text-sm text-neutral-400">
             Add a creative brief, references, or any notes for the creator.
-            You can upload a .md / .txt file, type it inline, or both. If you
-            do both, the uploaded file wins.
+            You can upload a .md / .txt file AND type inline notes — both
+            will be saved together.
           </p>
 
           <div>
@@ -540,23 +533,19 @@ function WorkForm({
             )}
           </div>
 
-          <div className="text-xs text-neutral-500 text-center">— or —</div>
-
           <div>
-            <Label className="text-neutral-300">Type instructions inline (optional)</Label>
+            <Label className="text-neutral-300">Notes (optional)</Label>
             <textarea
               value={instructionsText}
               onChange={(e) => setInstructionsText(e.target.value)}
               placeholder="Brief, references, style guidelines…"
               rows={6}
-              disabled={submitting || isPending || !!instructionsFile}
+              disabled={submitting || isPending}
               className="mt-1 w-full rounded-md bg-neutral-900 border border-neutral-700 text-white px-3 py-2 text-sm font-mono disabled:opacity-50"
             />
-            {instructionsFile && (
-              <p className="text-xs text-neutral-500 mt-1">
-                Disabled — the uploaded file will be used instead.
-              </p>
-            )}
+            <p className="text-xs text-neutral-500 mt-1">
+              Saved as notes on the work. Independent of the uploaded file.
+            </p>
           </div>
         </div>
       )}

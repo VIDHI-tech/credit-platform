@@ -87,6 +87,61 @@ export default async function WorkDetailPage({ params }: PageProps) {
     (relatedWorks || []).map((w) => [w.id, w.status as WorkStatus]),
   );
 
+  // Batch-fetch full_name for every user who has assigned a generation to
+  // this client — used by the per-creator stats panel inside Sync & Assign.
+  const referencedAssignerIds = Array.from(
+    new Set(
+      (assignedToClient || [])
+        .map((g) => g.assigned_by)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  );
+  const { data: assignerMemberships } = referencedAssignerIds.length
+    ? await supabase
+        .from("memberships")
+        .select("user_id, full_name")
+        .in("user_id", referencedAssignerIds)
+    : { data: [] as { user_id: string; full_name: string }[] };
+  const creatorNameMap: Record<string, string> = Object.fromEntries(
+    (assignerMemberships || []).map((m) => [m.user_id, m.full_name]),
+  );
+
+  // Per-creator breakdown for THIS work only.
+  // - actualUsage : credits on this work that are NOT wasted
+  // - wastage     : credits on this work that ARE wasted
+  // - rework      : credits whose work is in 'rework' status (this work counts
+  //                 when it's currently in rework, plus generations attributed
+  //                 to other works on the same client that are in rework)
+  const perCreatorStats: Record<
+    string,
+    { name: string; actual: number; wastage: number; rework: number }
+  > = {};
+  for (const g of assignedToClient || []) {
+    if (!g.assigned_by) continue;
+    const credits = parseFloat(g.credits || "0");
+    if (!perCreatorStats[g.assigned_by]) {
+      perCreatorStats[g.assigned_by] = {
+        name: creatorNameMap[g.assigned_by] || "Unknown",
+        actual: 0,
+        wastage: 0,
+        rework: 0,
+      };
+    }
+    const row = perCreatorStats[g.assigned_by];
+    const onThisWork = g.work_id === work.id;
+    if (onThisWork) {
+      if (g.is_waste) row.wastage += credits;
+      else row.actual += credits;
+    }
+    if (g.work_id && workStatusMap[g.work_id] === "rework") {
+      row.rework += credits;
+    }
+  }
+  const creatorStats = Object.entries(perCreatorStats).map(([userId, s]) => ({
+    userId,
+    ...s,
+  }));
+
   const usedCredits = (assignedToClient || [])
     .filter((g) => g.work_id === work.id)
     .reduce((s, g) => s + parseFloat(g.credits || "0"), 0);
@@ -230,6 +285,7 @@ export default async function WorkDetailPage({ params }: PageProps) {
           clientId={work.client_id}
           clientName={client?.name || ""}
           userRole={membership.role as "master" | "manager" | "creator"}
+          creatorStats={creatorStats}
         />
       </div>
 
@@ -258,12 +314,24 @@ export default async function WorkDetailPage({ params }: PageProps) {
       )}
 
       {/* INSTRUCTIONS */}
-      {work.instructions_path && (
+      {(work.instructions_path || work.notes) && (
         <section className="bg-neutral-950 border border-neutral-800 rounded-lg overflow-hidden mb-6">
           <div className="px-4 py-3 border-b border-neutral-800">
             <h2 className="font-semibold text-white text-sm">Instructions</h2>
           </div>
-          <InstructionsViewer path={work.instructions_path} />
+          {work.instructions_path && (
+            <InstructionsViewer path={work.instructions_path} />
+          )}
+          {work.notes && (
+            <div className="px-4 py-3 border-t border-neutral-800">
+              <div className="text-[10px] text-neutral-500 uppercase tracking-wider mb-2">
+                Notes
+              </div>
+              <p className="text-sm text-neutral-200 whitespace-pre-wrap font-mono">
+                {work.notes}
+              </p>
+            </div>
+          )}
         </section>
       )}
 
