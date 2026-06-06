@@ -51,7 +51,7 @@ interface Props {
   userId: string
 }
 
-function MediaPreview({
+export function MediaPreview({
   url,
   mediaType,
   name,
@@ -100,7 +100,7 @@ function ReworkTag() {
   )
 }
 
-function UnassignButton({
+export function UnassignButton({
   generationId,
   assignedAt,
   assignedBy,
@@ -188,7 +188,7 @@ function UnassignButton({
   )
 }
 
-function WastageButton({
+export function WastageButton({
   generationId,
   wastedAt,
   wastedBy,

@@ -18,6 +18,7 @@ import { StatusDropdown } from "./status-dropdown";
 import { EditClientButton } from "./edit-client-button";
 import { DeleteClientButton } from "./delete-client-button";
 import { CreateWorkButton } from "./create-work-button";
+import { ClientGenerationsTables } from "./client-generations-tables";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -38,7 +39,9 @@ export default async function ClientDetailPage({ params }: PageProps) {
 
   const { data: generations } = await supabase
     .from("generations")
-    .select("id, display_name, result_url, media_type, credits, hf_created_at")
+    .select(
+      "id, display_name, result_url, media_type, credits, hf_created_at, work_id, assigned_at, assigned_by, is_waste, wasted_at, wasted_by, hf_connection_label",
+    )
     .eq("client_id", id)
     .order("hf_created_at", { ascending: false });
 
@@ -85,6 +88,13 @@ export default async function ClientDetailPage({ params }: PageProps) {
     (sum, g) => sum + parseFloat(g.credits || "0"),
     0,
   );
+
+  // work_id → "title or video_type" for the "via {work}" hint per row.
+  const workTitles: Record<string, string> = {};
+  (works || []).forEach((w) => {
+    workTitles[w.id] = w.title || w.video_type || "Untitled work";
+  });
+
   const status = client.status as ClientStatus;
   const canEdit = can(membership.role, "clients", "edit");
   const canDelete = can(membership.role, "clients", "delete");
@@ -224,56 +234,29 @@ export default async function ClientDetailPage({ params }: PageProps) {
         )}
       </section>
 
-      {/* ALL GENERATIONS */}
-      <section className="bg-neutral-950 border border-neutral-800 rounded-lg overflow-hidden mb-6">
-        <div className="px-4 py-3 border-b border-neutral-800">
-          <h2 className="font-semibold text-white">All Generations</h2>
-        </div>
-        {!generations || generations.length === 0 ? (
-          <div className="p-6 text-center text-neutral-500 text-sm">
-            No generations assigned yet.
-          </div>
-        ) : (
-          <div className="divide-y divide-neutral-800 max-h-96 overflow-auto">
-            {generations.map((g) => (
-              <div key={g.id} className="px-4 py-2 flex items-center gap-3">
-                {g.media_type === "video" ? (
-                  <video
-                    src={g.result_url}
-                    className="w-16 h-12 rounded object-cover bg-black"
-                    preload="metadata"
-                    muted
-                  />
-                ) : (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={g.result_url}
-                    alt={g.display_name}
-                    className="w-16 h-12 rounded object-cover bg-neutral-800"
-                  />
-                )}
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium text-white truncate">
-                    {g.display_name}
-                  </div>
-                  <div className="text-xs text-neutral-500">
-                    {new Date(g.hf_created_at).toLocaleDateString("en-US")}
-                  </div>
-                </div>
-                <div className="text-right">
-                  <div
-                    className={`text-sm font-bold ${parseFloat(g.credits) > 0 ? "text-orange-400" : "text-neutral-500"}`}
-                  >
-                    {parseFloat(g.credits) > 0
-                      ? parseFloat(g.credits).toFixed(1)
-                      : "free"}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
+      {/* ASSIGNED + WASTAGE TABLES — same pattern as the work-detail page,
+          with the 60s undo window for unassign / mark-useful. */}
+      <ClientGenerationsTables
+        clientName={client.name}
+        generations={(generations || []).map((g) => ({
+          id: g.id,
+          display_name: g.display_name,
+          result_url: g.result_url,
+          media_type: g.media_type,
+          credits: g.credits,
+          hf_created_at: g.hf_created_at,
+          work_id: g.work_id,
+          assigned_at: g.assigned_at,
+          assigned_by: g.assigned_by,
+          is_waste: g.is_waste,
+          wasted_at: g.wasted_at,
+          wasted_by: g.wasted_by,
+          hf_connection_label: g.hf_connection_label,
+        }))}
+        workTitles={workTitles}
+        userRole={membership.role as "master" | "manager" | "creator"}
+        userId={membership.user_id}
+      />
 
       {canDelete && (
         <section className="bg-red-950/30 border border-red-900 rounded-lg p-6">
