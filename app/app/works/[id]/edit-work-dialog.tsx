@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase-browser'
 import { Button } from '@/components/ui/button'
@@ -61,6 +61,7 @@ function getTodayDateString(): string {
 export function EditWorkDialog({ open, onOpenChange, work }: Props) {
   const router = useRouter()
   const [submitting, setSubmitting] = useState(false)
+  const [isPending, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
 
   const [title, setTitle] = useState(work.title || '')
@@ -174,7 +175,9 @@ export function EditWorkDialog({ open, onOpenChange, work }: Props) {
         throw new Error(data.error || 'Update failed')
       }
       onOpenChange(false)
-      router.refresh()
+      startTransition(() => {
+        router.refresh()
+      })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong')
     } finally {
@@ -360,15 +363,23 @@ export function EditWorkDialog({ open, onOpenChange, work }: Props) {
         </div>
 
         <div className="flex justify-end gap-3 pt-2">
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
+          <Button
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            disabled={submitting || isPending}
+          >
             Cancel
           </Button>
           <Button
             onClick={handleSave}
-            disabled={submitting}
+            disabled={submitting || isPending}
             className="bg-lime-400 hover:bg-lime-300 text-black font-semibold"
           >
-            {submitting ? 'Saving…' : 'Save Changes'}
+            {submitting
+              ? 'Saving…'
+              : isPending
+                ? 'Updating…'
+                : 'Save Changes'}
           </Button>
         </div>
       </DialogContent>

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import {
@@ -24,19 +24,27 @@ interface Props {
 export function DeleteWorkButton({ workId, workTitle }: Props) {
   const router = useRouter()
   const [busy, setBusy] = useState(false)
+  const [isPending, startTransition] = useTransition()
 
   async function handleDelete() {
     setBusy(true)
     const res = await fetch(`/api/works/${workId}`, { method: 'DELETE' })
     if (res.ok) {
-      router.push('/app/works')
-      router.refresh()
+      // router.push + refresh wrapped in a transition so the button stays
+      // disabled until we've actually navigated away.
+      startTransition(() => {
+        router.push('/app/works')
+        router.refresh()
+      })
+      // Leave busy=true; this component unmounts on navigation.
     } else {
       const data = await res.json().catch(() => ({}))
       alert(data.error || 'Delete failed')
       setBusy(false)
     }
   }
+
+  const disabled = busy || isPending
 
   return (
     <AlertDialog>
@@ -45,7 +53,7 @@ export function DeleteWorkButton({ workId, workTitle }: Props) {
           <Button
             size="sm"
             variant="outline"
-            disabled={busy}
+            disabled={disabled}
             className="text-red-400 border-red-900 hover:bg-red-950"
           />
         }
@@ -64,13 +72,13 @@ export function DeleteWorkButton({ workId, workTitle }: Props) {
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
+          <AlertDialogCancel disabled={disabled}>Cancel</AlertDialogCancel>
           <AlertDialogAction
             onClick={handleDelete}
-            disabled={busy}
+            disabled={disabled}
             className="bg-red-700 hover:bg-red-600 text-white"
           >
-            {busy ? 'Deleting…' : 'Delete Work'}
+            {disabled ? 'Deleting…' : 'Delete Work'}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

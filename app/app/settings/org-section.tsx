@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase-browser'
 import { Button } from '@/components/ui/button'
@@ -20,6 +20,7 @@ export function OrgSection({ orgId, initialName, initialDescription }: Props) {
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [isPending, startTransition] = useTransition()
 
   async function handleSave() {
     if (!name.trim()) { setError('Name cannot be empty'); return }
@@ -36,7 +37,9 @@ export function OrgSection({ orgId, initialName, initialDescription }: Props) {
       setError(e.message.includes('unique') ? 'That org name is already taken' : e.message)
     } else {
       setSaved(true)
-      router.refresh()
+      startTransition(() => {
+        router.refresh()
+      })
       setTimeout(() => setSaved(false), 3000)
     }
   }
@@ -70,10 +73,10 @@ export function OrgSection({ orgId, initialName, initialDescription }: Props) {
         {error && <p className="text-red-400 text-sm">{error}</p>}
         <Button
           onClick={handleSave}
-          disabled={saving}
+          disabled={saving || isPending}
           className="bg-lime-400 text-black hover:bg-lime-300"
         >
-          {saving ? 'Saving…' : saved ? '✓ Saved' : 'Save Changes'}
+          {saving ? 'Saving…' : isPending ? 'Updating…' : saved ? '✓ Saved' : 'Save Changes'}
         </Button>
       </div>
     </section>

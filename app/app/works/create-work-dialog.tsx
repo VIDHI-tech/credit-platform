@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import type { DateRange } from 'react-day-picker'
 import { createClient } from '@/lib/supabase-browser'
@@ -93,6 +93,7 @@ function WorkForm({
   onOpenChange: (open: boolean) => void
 }) {
   const router = useRouter()
+  const [isPending, startTransition] = useTransition()
   const [step, setStep] = useState(1)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -259,8 +260,10 @@ function WorkForm({
       }
 
       onOpenChange(false)
-      router.refresh()
-      router.push(`/app/works/${workId}`)
+      startTransition(() => {
+        router.refresh()
+        router.push(`/app/works/${workId}`)
+      })
     } catch (err) {
       console.error('[create-work] error:', err)
       setError(err instanceof Error ? err.message : 'Something went wrong')
@@ -475,15 +478,15 @@ function WorkForm({
                 <Button
                   size="sm"
                   onClick={handleAddType}
-                  disabled={savingType || !newTypeName.trim()}
+                  disabled={savingType || isPending || !newTypeName.trim()}
                   className="bg-lime-400 hover:bg-lime-300 text-black font-semibold"
                 >
-                  {savingType ? 'Adding…' : 'Add'}
+                  {savingType ? 'Adding…' : isPending ? 'Updating…' : 'Add'}
                 </Button>
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={savingType}
+                  disabled={savingType || isPending}
                   onClick={() => {
                     setAddingType(false)
                     setNewTypeName('')
@@ -527,7 +530,7 @@ function WorkForm({
               accept=".md,.txt"
               onChange={(e) => setInstructionsFile(e.target.files?.[0] || null)}
               className="mt-1 bg-neutral-900 border-neutral-700 text-white file:text-neutral-300 file:bg-neutral-700 file:border-0 file:rounded file:px-3 file:py-1 file:mr-3"
-              disabled={submitting}
+              disabled={submitting || isPending}
             />
             {instructionsFile && (
               <p className="text-xs text-neutral-400 mt-2">
@@ -546,7 +549,7 @@ function WorkForm({
               onChange={(e) => setInstructionsText(e.target.value)}
               placeholder="Brief, references, style guidelines…"
               rows={6}
-              disabled={submitting || !!instructionsFile}
+              disabled={submitting || isPending || !!instructionsFile}
               className="mt-1 w-full rounded-md bg-neutral-900 border border-neutral-700 text-white px-3 py-2 text-sm font-mono disabled:opacity-50"
             />
             {instructionsFile && (
@@ -571,7 +574,7 @@ function WorkForm({
         <Button
           variant="outline"
           onClick={() => (step > 1 ? setStep(step - 1) : onOpenChange(false))}
-          disabled={submitting}
+          disabled={submitting || isPending}
         >
           {step === 1 ? 'Cancel' : 'Back'}
         </Button>
@@ -585,7 +588,7 @@ function WorkForm({
               setError(null)
               setStep(step + 1)
             }}
-            disabled={submitting}
+            disabled={submitting || isPending}
             className="bg-lime-400 hover:bg-lime-300 text-black font-semibold"
           >
             Next
@@ -593,10 +596,10 @@ function WorkForm({
         ) : (
           <Button
             onClick={handleSubmit}
-            disabled={submitting}
+            disabled={submitting || isPending}
             className="bg-green-600 hover:bg-green-500 text-white"
           >
-            {submitting ? 'Creating…' : 'Create Work'}
+            {submitting ? 'Creating…' : isPending ? 'Updating…' : 'Create Work'}
           </Button>
         )}
       </div>

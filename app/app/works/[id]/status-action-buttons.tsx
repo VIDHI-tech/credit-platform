@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import type { WorkStatus } from '@/lib/work-helpers'
@@ -26,6 +26,7 @@ const colors: Record<Transition['variant'], string> = {
 export function StatusActionButtons({ workId, transitions }: Props) {
   const router = useRouter()
   const [busy, setBusy] = useState<string | null>(null)
+  const [isPending, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
 
   async function handleTransition(toStatus: WorkStatus) {
@@ -42,9 +43,17 @@ export function StatusActionButtons({ workId, transitions }: Props) {
       setBusy(null)
       return
     }
-    router.refresh()
+    // Keep button disabled until the server re-render actually completes.
+    startTransition(() => {
+      router.refresh()
+    })
     setBusy(null)
   }
+
+  // Disable every button while ANY transition is in-flight OR the refresh
+  // is still being applied — otherwise the user sees a flash of enabled
+  // buttons before the new status renders.
+  const disabled = busy !== null || isPending
 
   return (
     <div className="flex flex-col items-end gap-2">
@@ -53,11 +62,11 @@ export function StatusActionButtons({ workId, transitions }: Props) {
           <Button
             key={t.to}
             onClick={() => handleTransition(t.to)}
-            disabled={busy !== null}
+            disabled={disabled}
             className={colors[t.variant]}
             size="sm"
           >
-            {busy === t.to ? '…' : t.label}
+            {busy === t.to || (isPending && busy === null) ? '…' : t.label}
           </Button>
         ))}
       </div>

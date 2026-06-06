@@ -14,7 +14,7 @@
 // the `rework` status. The work-status lookup is passed in from the server
 // component via workStatusMap.
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -117,6 +117,7 @@ function UnassignButton({
   onError: (msg: string) => void
 }) {
   const [busy, setBusy] = useState(false)
+  const [isPending, startTransition] = useTransition()
   const [timeLeft, setTimeLeft] = useState<number | null>(null)
 
   const isMasterOrManager = userRole === 'master' || userRole === 'manager'
@@ -151,7 +152,11 @@ function UnassignButton({
         method: 'POST',
       })
       if (res.ok) {
-        onDone()
+        // Wrap the parent's refresh in a transition so the button stays
+        // disabled until the new server data has rendered (no enabled flicker).
+        startTransition(() => {
+          onDone()
+        })
       } else {
         const data = await res.json().catch(() => ({}))
         onError(`Unassign failed: ${data.error || 'unknown error'}`)
@@ -170,10 +175,14 @@ function UnassignButton({
       size="sm"
       variant="outline"
       onClick={handleUnassign}
-      disabled={busy}
+      disabled={busy || isPending}
       className="h-6 text-xs px-2 text-red-400 border-red-900 hover:bg-red-950"
     >
-      {busy ? '…' : isMasterOrManager ? 'Unassign' : `Undo (${timeLeft}s)`}
+      {busy || isPending
+        ? '…'
+        : isMasterOrManager
+          ? 'Unassign'
+          : `Undo (${timeLeft}s)`}
     </Button>
   )
 }
@@ -196,6 +205,7 @@ function WastageButton({
   onError: (msg: string) => void
 }) {
   const [busy, setBusy] = useState(false)
+  const [isPending, startTransition] = useTransition()
   const [timeLeft, setTimeLeft] = useState<number | null>(null)
 
   const isMaster = userRole === 'master'
@@ -229,7 +239,9 @@ function WastageButton({
         body: JSON.stringify({ is_waste: !isWasted }),
       })
       if (res.ok) {
-        onDone()
+        startTransition(() => {
+          onDone()
+        })
       } else {
         const data = await res.json().catch(() => ({}))
         onError(`Mark Useful failed: ${data.error || 'unknown error'}`)
@@ -256,10 +268,10 @@ function WastageButton({
       size="sm"
       variant="outline"
       onClick={handleToggleWaste}
-      disabled={busy}
+      disabled={busy || isPending}
       className="h-6 text-xs px-2 text-lime-400 border-lime-700 hover:bg-lime-950"
     >
-      {busy ? (
+      {busy || isPending ? (
         '…'
       ) : (
         <>

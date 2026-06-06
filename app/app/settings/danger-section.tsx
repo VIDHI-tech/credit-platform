@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase-browser'
 import { Button } from '@/components/ui/button'
@@ -17,6 +17,7 @@ export function DangerSection({ orgId, orgName }: Props) {
   const [confirmName, setConfirmName] = useState('')
   const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [isPending, startTransition] = useTransition()
 
   async function handleDelete() {
     if (confirmName !== orgName) { setError('Name does not match'); return }
@@ -26,7 +27,9 @@ export function DangerSection({ orgId, orgName }: Props) {
     const { error: e } = await supabase.from('organizations').delete().eq('id', orgId)
     if (e) { setError(e.message); setDeleting(false); return }
     await supabase.auth.signOut()
-    router.push('/')
+    startTransition(() => {
+      router.push('/')
+    })
   }
 
   return (
@@ -51,6 +54,7 @@ export function DangerSection({ orgId, orgName }: Props) {
             variant="outline"
             className="border-red-900 text-red-400 hover:bg-red-950"
             onClick={() => setOpen(true)}
+            disabled={deleting || isPending}
           >
             Delete Organization
           </Button>
@@ -69,12 +73,16 @@ export function DangerSection({ orgId, orgName }: Props) {
             <div className="flex gap-2">
               <Button
                 onClick={handleDelete}
-                disabled={deleting || confirmName !== orgName}
+                disabled={deleting || isPending || confirmName !== orgName}
                 className="bg-red-700 hover:bg-red-600 text-white"
               >
-                {deleting ? 'Deleting…' : 'Permanently Delete'}
+                {deleting ? 'Deleting…' : isPending ? 'Updating…' : 'Permanently Delete'}
               </Button>
-              <Button variant="ghost" onClick={() => { setOpen(false); setConfirmName(''); setError(null) }}>
+              <Button
+                variant="ghost"
+                onClick={() => { setOpen(false); setConfirmName(''); setError(null) }}
+                disabled={deleting || isPending}
+              >
                 Cancel
               </Button>
             </div>

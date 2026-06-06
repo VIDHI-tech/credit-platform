@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase-browser'
 import { Button } from '@/components/ui/button'
@@ -51,9 +51,11 @@ export function InviteUserSection({ orgId, connections, initialInvitations }: Pr
   const [role, setRole] = useState<Role>('creator')
   const [selectedConnIds, setSelectedConnIds] = useState<Set<string>>(new Set())
   const [sending, setSending] = useState(false)
+  const [revokingId, setRevokingId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [newJoiner, setNewJoiner] = useState<string | null>(null)
+  const [isPending, startTransition] = useTransition()
 
   // Realtime watch for accepted invitations
   useEffect(() => {
@@ -75,7 +77,9 @@ export function InviteUserSection({ orgId, connections, initialInvitations }: Pr
           if (updated.used_at && !payload.old.used_at) {
             setNewJoiner(updated.email)
             setTimeout(() => setNewJoiner(null), 6000)
-            router.refresh()
+            startTransition(() => {
+              router.refresh()
+            })
           }
         }
       )
@@ -160,15 +164,20 @@ export function InviteUserSection({ orgId, connections, initialInvitations }: Pr
   }
 
   async function handleRevoke(id: string) {
-    const { error: e } = await supabase
-      .from('invitations')
-      .delete()
-      .eq('id', id)
-    if (e) {
-      setError(e.message)
-      return
+    setRevokingId(id)
+    try {
+      const { error: e } = await supabase
+        .from('invitations')
+        .delete()
+        .eq('id', id)
+      if (e) {
+        setError(e.message)
+        return
+      }
+      setInvitations(prev => prev.filter(i => i.id !== id))
+    } finally {
+      setRevokingId(null)
     }
-    setInvitations(prev => prev.filter(i => i.id !== id))
   }
 
   const pending = invitations.filter(i => !i.used_at)
@@ -195,7 +204,7 @@ export function InviteUserSection({ orgId, connections, initialInvitations }: Pr
               placeholder="user@example.com"
               className="flex-1 bg-neutral-900 border-neutral-700 text-white"
               onKeyDown={e => { if (e.key === 'Enter') handleInvite() }}
-              disabled={sending}
+              disabled={sending || isPending}
             />
             <Select value={role} onValueChange={v => setRole(v as Role)}>
               <SelectTrigger className="w-28 bg-neutral-900 border-neutral-700">
@@ -294,10 +303,10 @@ export function InviteUserSection({ orgId, connections, initialInvitations }: Pr
 
           <Button
             onClick={handleInvite}
-            disabled={sending || !email.trim()}
+            disabled={sending || isPending || !email.trim()}
             className="w-full bg-lime-400 text-black hover:bg-lime-300 font-semibold"
           >
-            {sending ? 'Inviting…' : 'Send Invitation'}
+            {sending ? 'Inviting…' : isPending ? 'Updating…' : 'Send Invitation'}
           </Button>
         </div>
 
@@ -348,6 +357,7 @@ export function InviteUserSection({ orgId, connections, initialInvitations }: Pr
                       size="sm"
                       variant="ghost"
                       onClick={() => handleRevoke(inv.id)}
+                      disabled={revokingId === inv.id || isPending}
                       className="h-6 w-6 p-0 text-neutral-500 hover:text-red-400"
                     >
                       <X className="size-3" />

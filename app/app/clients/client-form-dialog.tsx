@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase-browser'
 import { Button } from '@/components/ui/button'
@@ -79,6 +79,7 @@ function ClientForm({
   onOpenChange: (open: boolean) => void
 }) {
   const router = useRouter()
+  const [isPending, startTransition] = useTransition()
   const editing = mode === 'edit' && initialData
   const [name, setName] = useState(editing ? initialData.name : '')
   const [industry, setIndustry] = useState(
@@ -218,7 +219,9 @@ function ClientForm({
       }
 
       onOpenChange(false)
-      router.refresh()
+      startTransition(() => {
+        router.refresh()
+      })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong')
     } finally {
@@ -250,7 +253,7 @@ function ClientForm({
             onChange={(e) => setName(e.target.value)}
             placeholder="e.g. Cream Centre"
             className="mt-1 bg-neutral-900 border-neutral-700 text-white"
-            disabled={submitting}
+            disabled={submitting || isPending}
           />
         </div>
 
@@ -264,7 +267,7 @@ function ClientForm({
                 if (val === '__add_industry') setAddingIndustry(true)
                 else setIndustry(val)
               }}
-              disabled={submitting}
+              disabled={submitting || isPending}
             >
               <SelectTrigger className="mt-1 bg-neutral-900 border-neutral-700">
                 <SelectValue placeholder="Pick or add an industry..." />
@@ -290,7 +293,7 @@ function ClientForm({
                 onChange={(e) => setNewIndustryName(e.target.value)}
                 placeholder="e.g. Food & Beverage"
                 className="bg-neutral-900 border-neutral-700 text-white flex-1"
-                disabled={savingIndustry}
+                disabled={savingIndustry || isPending}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
                     e.preventDefault()
@@ -301,15 +304,15 @@ function ClientForm({
               <Button
                 size="sm"
                 onClick={handleAddIndustry}
-                disabled={savingIndustry || !newIndustryName.trim()}
+                disabled={savingIndustry || isPending || !newIndustryName.trim()}
                 className="bg-lime-400 hover:bg-lime-300 text-black font-semibold"
               >
-                {savingIndustry ? 'Adding…' : 'Add'}
+                {savingIndustry ? 'Adding…' : isPending ? 'Updating…' : 'Add'}
               </Button>
               <Button
                 size="sm"
                 variant="outline"
-                disabled={savingIndustry}
+                disabled={savingIndustry || isPending}
                 onClick={() => {
                   setAddingIndustry(false)
                   setNewIndustryName('')
@@ -326,7 +329,7 @@ function ClientForm({
           <Select
             value={status}
             onValueChange={(v) => setStatus(v as ClientStatus)}
-            disabled={submitting}
+            disabled={submitting || isPending}
           >
             <SelectTrigger className="mt-1 bg-neutral-900 border-neutral-700">
               <SelectValue>
@@ -357,20 +360,22 @@ function ClientForm({
         <Button
           variant="outline"
           onClick={() => onOpenChange(false)}
-          disabled={submitting}
+          disabled={submitting || isPending}
         >
           Cancel
         </Button>
         <Button
           onClick={handleSubmit}
-          disabled={submitting}
+          disabled={submitting || isPending}
           className="bg-lime-400 hover:bg-lime-300 text-black font-semibold"
         >
           {submitting
             ? 'Saving…'
-            : mode === 'create'
-              ? 'Create Client'
-              : 'Save Changes'}
+            : isPending
+              ? 'Updating…'
+              : mode === 'create'
+                ? 'Create Client'
+                : 'Save Changes'}
         </Button>
       </DialogFooter>
     </>

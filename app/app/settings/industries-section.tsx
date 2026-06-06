@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase-browser'
 import { Button } from '@/components/ui/button'
@@ -36,6 +36,7 @@ export function IndustriesSection({
   const [editName, setEditName] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [isPending, startTransition] = useTransition()
 
   async function handleAdd() {
     if (!newName.trim()) return
@@ -55,7 +56,9 @@ export function IndustriesSection({
     } else {
       setNewName('')
       setAdding(false)
-      router.refresh()
+      startTransition(() => {
+        router.refresh()
+      })
     }
     setBusy(null)
   }
@@ -74,7 +77,9 @@ export function IndustriesSection({
     } else {
       setEditingId(null)
       setEditName('')
-      router.refresh()
+      startTransition(() => {
+        router.refresh()
+      })
     }
     setBusy(null)
   }
@@ -86,7 +91,9 @@ export function IndustriesSection({
     const { error: err } = await supabase.from('industries').delete().eq('id', id)
     if (err) setError(err.message)
     setBusy(null)
-    router.refresh()
+    startTransition(() => {
+      router.refresh()
+    })
   }
 
   return (
@@ -118,15 +125,16 @@ export function IndustriesSection({
                   <Button
                     size="sm"
                     onClick={() => handleRename(ind.id)}
-                    disabled={busy === ind.id}
+                    disabled={busy === ind.id || isPending}
                     className="h-8 bg-lime-400 hover:bg-lime-300 text-black font-semibold"
                   >
-                    Save
+                    {busy === ind.id ? 'Saving…' : isPending ? 'Updating…' : 'Save'}
                   </Button>
                   <Button
                     size="sm"
                     variant="outline"
                     className="h-8"
+                    disabled={busy === ind.id || isPending}
                     onClick={() => {
                       setEditingId(null)
                       setEditName('')
@@ -143,6 +151,7 @@ export function IndustriesSection({
                       size="sm"
                       variant="outline"
                       className="h-8"
+                      disabled={busy === ind.id || isPending}
                       onClick={() => {
                         setEditingId(ind.id)
                         setEditName(ind.name)
@@ -156,7 +165,7 @@ export function IndustriesSection({
                           <Button
                             size="sm"
                             variant="outline"
-                            disabled={busy === ind.id}
+                            disabled={busy === ind.id || isPending}
                             className="h-8 text-red-400 border-red-900 hover:bg-red-950"
                           />
                         }
@@ -216,15 +225,16 @@ export function IndustriesSection({
           <Button
             size="sm"
             onClick={handleAdd}
-            disabled={busy === 'add'}
+            disabled={busy === 'add' || isPending}
             className="h-8 bg-lime-400 hover:bg-lime-300 text-black font-semibold"
           >
-            Add
+            {busy === 'add' ? 'Adding…' : isPending ? 'Updating…' : 'Add'}
           </Button>
           <Button
             size="sm"
             variant="outline"
             className="h-8"
+            disabled={busy === 'add' || isPending}
             onClick={() => {
               setAdding(false)
               setNewName('')
@@ -238,6 +248,7 @@ export function IndustriesSection({
           <Button
             size="sm"
             onClick={() => setAdding(true)}
+            disabled={isPending}
             className="bg-lime-400 hover:bg-lime-300 text-black font-semibold"
           >
             + Add Industry

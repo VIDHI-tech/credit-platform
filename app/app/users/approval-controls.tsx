@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase-browser'
 import { can } from '@/lib/rbac'
@@ -38,6 +38,7 @@ export function ApprovalControls({ membershipId, userRole, connections }: Approv
   const router = useRouter()
   const [role, setRole] = useState<'manager' | 'creator'>('creator')
   const [busy, setBusy] = useState(false)
+  const [isPending, startTransition] = useTransition()
   const [dialogOpen, setDialogOpen] = useState(false)
   const [selectedConnIds, setSelectedConnIds] = useState<Set<string>>(new Set())
   const [error, setError] = useState<string | null>(null)
@@ -78,7 +79,9 @@ export function ApprovalControls({ membershipId, userRole, connections }: Approv
 
     setBusy(false)
     setDialogOpen(false)
-    router.refresh()
+    startTransition(() => {
+      router.refresh()
+    })
   }
 
   async function handleReject() {
@@ -95,7 +98,9 @@ export function ApprovalControls({ membershipId, userRole, connections }: Approv
       return
     }
     setBusy(false)
-    router.refresh()
+    startTransition(() => {
+      router.refresh()
+    })
   }
 
   function openApproveDialog() {
@@ -116,6 +121,7 @@ export function ApprovalControls({ membershipId, userRole, connections }: Approv
         <Select
           value={role}
           onValueChange={(v) => setRole(v as 'manager' | 'creator')}
+          disabled={busy || isPending}
         >
           <SelectTrigger className="w-28 h-8 text-xs bg-neutral-900 border-neutral-700">
             <SelectValue>
@@ -134,19 +140,19 @@ export function ApprovalControls({ membershipId, userRole, connections }: Approv
         <Button
           size="sm"
           onClick={openApproveDialog}
-          disabled={busy}
+          disabled={busy || isPending}
           className="bg-green-600 hover:bg-green-500 text-white h-8"
         >
-          Approve
+          {isPending ? 'Updating…' : 'Approve'}
         </Button>
         <Button
           size="sm"
           variant="outline"
           onClick={handleReject}
-          disabled={busy}
+          disabled={busy || isPending}
           className="h-8 text-red-400 border-red-900 hover:bg-red-950"
         >
-          {busy ? 'Rejecting…' : 'Reject'}
+          {busy ? 'Rejecting…' : isPending ? 'Updating…' : 'Reject'}
         </Button>
         {error && !dialogOpen && (
           <span className="text-xs text-red-400 ml-2">{error}</span>
@@ -238,15 +244,15 @@ export function ApprovalControls({ membershipId, userRole, connections }: Approv
           )}
 
           <div className="flex justify-end gap-2 pt-2 border-t border-neutral-800">
-            <Button variant="ghost" onClick={() => setDialogOpen(false)} disabled={busy}>
+            <Button variant="ghost" onClick={() => setDialogOpen(false)} disabled={busy || isPending}>
               Cancel
             </Button>
             <Button
               onClick={handleConfirmApprove}
-              disabled={busy}
+              disabled={busy || isPending}
               className="bg-green-600 hover:bg-green-500 text-white"
             >
-              {busy ? 'Approving…' : 'Approve & Grant Access'}
+              {busy ? 'Approving…' : isPending ? 'Updating…' : 'Approve & Grant Access'}
             </Button>
           </div>
         </DialogContent>

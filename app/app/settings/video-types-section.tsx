@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase-browser'
 import { Button } from '@/components/ui/button'
@@ -28,6 +28,7 @@ export function VideoTypesSection({ initialTypes }: Props) {
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const [isPending, startTransition] = useTransition()
 
   async function handleAdd() {
     if (!newName.trim()) return
@@ -78,7 +79,9 @@ export function VideoTypesSection({ initialTypes }: Props) {
       if (e) throw e
       setTypes(prev => prev.map(t => t.id === id ? { ...t, name: editName.trim() } : t))
       setEditingId(null)
-      router.refresh()
+      startTransition(() => {
+        router.refresh()
+      })
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Rename failed')
     } finally {
@@ -145,16 +148,16 @@ export function VideoTypesSection({ initialTypes }: Props) {
                     <Button
                       size="sm"
                       onClick={() => handleRename(t.id)}
-                      disabled={savingId === t.id}
+                      disabled={savingId === t.id || isPending}
                       className="h-7 bg-lime-400 text-black hover:bg-lime-300"
                     >
-                      {savingId === t.id ? 'Saving…' : 'Save'}
+                      {savingId === t.id ? 'Saving…' : isPending ? 'Updating…' : 'Save'}
                     </Button>
                     <Button
                       size="sm"
                       variant="ghost"
                       onClick={() => setEditingId(null)}
-                      disabled={savingId === t.id}
+                      disabled={savingId === t.id || isPending}
                       className="h-7"
                     >
                       Cancel
@@ -167,7 +170,7 @@ export function VideoTypesSection({ initialTypes }: Props) {
                       size="sm"
                       variant="ghost"
                       onClick={() => startEdit(t)}
-                      disabled={deletingId === t.id}
+                      disabled={deletingId === t.id || isPending}
                       className="h-7 text-neutral-400 hover:text-white"
                     >
                       Rename
@@ -176,10 +179,10 @@ export function VideoTypesSection({ initialTypes }: Props) {
                       size="sm"
                       variant="ghost"
                       onClick={() => handleDelete(t.id, t.name)}
-                      disabled={deletingId === t.id}
+                      disabled={deletingId === t.id || isPending}
                       className="h-7 text-red-400 hover:text-red-300"
                     >
-                      {deletingId === t.id ? 'Deleting…' : 'Delete'}
+                      {deletingId === t.id ? 'Deleting…' : isPending ? 'Updating…' : 'Delete'}
                     </Button>
                   </>
                 )}
@@ -196,10 +199,10 @@ export function VideoTypesSection({ initialTypes }: Props) {
           placeholder="New type name (e.g. UGC, Marketing)"
           className="flex-1 bg-neutral-900 border-neutral-700"
           onKeyDown={e => { if (e.key === 'Enter') handleAdd() }}
-          disabled={adding}
+          disabled={adding || isPending}
         />
-        <Button onClick={handleAdd} disabled={adding || !newName.trim()} className="bg-lime-400 text-black hover:bg-lime-300">
-          {adding ? 'Adding…' : '+ Add'}
+        <Button onClick={handleAdd} disabled={adding || isPending || !newName.trim()} className="bg-lime-400 text-black hover:bg-lime-300">
+          {adding ? 'Adding…' : isPending ? 'Updating…' : '+ Add'}
         </Button>
       </div>
     </section>

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase-browser'
 import { Button } from '@/components/ui/button'
@@ -35,31 +35,48 @@ export function ConnectionsList({
   const [addOpen, setAddOpen] = useState(false)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [isPending, startTransition] = useTransition()
 
   async function toggleEnabled(id: string, next: boolean) {
     setBusyId(id)
     setError(null)
-    const supabase = createClient()
-    const { error } = await supabase
-      .from('hf_connections')
-      .update({ is_active: next })
-      .eq('id', id)
-    if (error) setError(error.message)
-    setBusyId(null)
-    router.refresh()
+    try {
+      const supabase = createClient()
+      const { error } = await supabase
+        .from('hf_connections')
+        .update({ is_active: next })
+        .eq('id', id)
+      if (error) {
+        setError(error.message)
+        return
+      }
+      startTransition(() => {
+        router.refresh()
+      })
+    } finally {
+      setBusyId(null)
+    }
   }
 
   async function remove(id: string) {
     setBusyId(id)
     setError(null)
-    const supabase = createClient()
-    const { error } = await supabase
-      .from('hf_connections')
-      .delete()
-      .eq('id', id)
-    if (error) setError(error.message)
-    setBusyId(null)
-    router.refresh()
+    try {
+      const supabase = createClient()
+      const { error } = await supabase
+        .from('hf_connections')
+        .delete()
+        .eq('id', id)
+      if (error) {
+        setError(error.message)
+        return
+      }
+      startTransition(() => {
+        router.refresh()
+      })
+    } finally {
+      setBusyId(null)
+    }
   }
 
   return (
@@ -101,11 +118,17 @@ export function ConnectionsList({
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={busyId === c.id}
+                  disabled={busyId === c.id || isPending}
                   onClick={() => toggleEnabled(c.id, !c.is_active)}
                   className="h-8"
                 >
-                  {c.is_active ? 'Disable' : 'Enable'}
+                  {busyId === c.id
+                    ? '…'
+                    : isPending
+                      ? '…'
+                      : c.is_active
+                        ? 'Disable'
+                        : 'Enable'}
                 </Button>
                 <AlertDialog>
                   <AlertDialogTrigger
@@ -113,7 +136,7 @@ export function ConnectionsList({
                       <Button
                         size="sm"
                         variant="outline"
-                        disabled={busyId === c.id}
+                        disabled={busyId === c.id || isPending}
                         className="h-8 text-red-400 border-red-900 hover:bg-red-950"
                       />
                     }
@@ -131,12 +154,21 @@ export function ConnectionsList({
                       </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
-                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      <AlertDialogCancel
+                        disabled={busyId === c.id || isPending}
+                      >
+                        Cancel
+                      </AlertDialogCancel>
                       <AlertDialogAction
                         onClick={() => remove(c.id)}
+                        disabled={busyId === c.id || isPending}
                         className="bg-red-700 hover:bg-red-600 text-white"
                       >
-                        Remove
+                        {busyId === c.id
+                          ? 'Removing…'
+                          : isPending
+                            ? 'Updating…'
+                            : 'Remove'}
                       </AlertDialogAction>
                     </AlertDialogFooter>
                   </AlertDialogContent>
@@ -158,13 +190,16 @@ export function ConnectionsList({
           onCancel={() => setAddOpen(false)}
           onDone={() => {
             setAddOpen(false)
-            router.refresh()
+            startTransition(() => {
+              router.refresh()
+            })
           }}
         />
       ) : (
         <div className="px-4 py-3 border-t border-neutral-800">
           <Button
             onClick={() => setAddOpen(true)}
+            disabled={isPending}
             className="bg-lime-400 hover:bg-lime-300 text-black font-semibold"
           >
             + Add Higgsfield account

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase-browser'
 import { Button } from '@/components/ui/button'
@@ -24,6 +24,7 @@ interface Props {
 export function DeleteClientButton({ clientId, clientName }: Props) {
   const router = useRouter()
   const [busy, setBusy] = useState(false)
+  const [isPending, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
 
   async function handleDelete() {
@@ -36,8 +37,11 @@ export function DeleteClientButton({ clientId, clientName }: Props) {
       setBusy(false)
       return
     }
-    router.push('/app/clients')
-    router.refresh()
+    startTransition(() => {
+      router.push('/app/clients')
+      router.refresh()
+    })
+    setBusy(false)
   }
 
   return (
@@ -62,13 +66,13 @@ export function DeleteClientButton({ clientId, clientName }: Props) {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={busy || isPending}>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={handleDelete}
-              disabled={busy}
+              disabled={busy || isPending}
               className="bg-red-700 hover:bg-red-600 text-white"
             >
-              {busy ? 'Deleting…' : 'Delete'}
+              {busy ? 'Deleting…' : isPending ? 'Updating…' : 'Delete'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

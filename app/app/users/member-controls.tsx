@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase-browser'
 import { can } from '@/lib/rbac'
@@ -55,6 +55,7 @@ export function MemberControls({
   const router = useRouter()
   const [role, setRole] = useState<Role>(currentRole)
   const [busy, setBusy] = useState(false)
+  const [isPending, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
 
   async function changeRole(next: Role) {
@@ -68,18 +69,23 @@ export function MemberControls({
     setBusy(true)
     setError(null)
     setRole(next) // optimistic
-    const supabase = createClient()
-    const { error: err } = await supabase
-      .from('memberships')
-      .update({ role: next })
-      .eq('id', membershipId)
-    if (err) {
-      setError(err.message)
-      setRole(currentRole) // revert
-    } else {
-      router.refresh()
+    try {
+      const supabase = createClient()
+      const { error: err } = await supabase
+        .from('memberships')
+        .update({ role: next })
+        .eq('id', membershipId)
+      if (err) {
+        setError(err.message)
+        setRole(currentRole) // revert
+      } else {
+        startTransition(() => {
+          router.refresh()
+        })
+      }
+    } finally {
+      setBusy(false)
     }
-    setBusy(false)
   }
 
   async function remove() {
@@ -91,14 +97,22 @@ export function MemberControls({
     }
     setBusy(true)
     setError(null)
-    const supabase = createClient()
-    const { error: err } = await supabase
-      .from('memberships')
-      .delete()
-      .eq('id', membershipId)
-    if (err) setError(err.message)
-    else router.refresh()
-    setBusy(false)
+    try {
+      const supabase = createClient()
+      const { error: err } = await supabase
+        .from('memberships')
+        .delete()
+        .eq('id', membershipId)
+      if (err) {
+        setError(err.message)
+      } else {
+        startTransition(() => {
+          router.refresh()
+        })
+      }
+    } finally {
+      setBusy(false)
+    }
   }
 
   const canEdit = can(userRole, 'users_role_edit', 'edit')
@@ -118,7 +132,7 @@ export function MemberControls({
         <Select
           value={role}
           onValueChange={(v) => changeRole(v as Role)}
-          disabled={busy || !canEdit}
+          disabled={busy || isPending || !canEdit}
         >
           <SelectTrigger className="w-28 h-8 text-xs bg-neutral-900 border-neutral-700">
             <SelectValue>
@@ -142,7 +156,7 @@ export function MemberControls({
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={busy || isLastMaster}
+                  disabled={busy || isPending || isLastMaster}
                   className="h-8 text-red-400 border-red-900 hover:bg-red-950 disabled:opacity-40"
                 />
               }
@@ -161,13 +175,13 @@ export function MemberControls({
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
-              <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
+              <AlertDialogCancel disabled={busy || isPending}>Cancel</AlertDialogCancel>
               <AlertDialogAction
                 onClick={remove}
-                disabled={busy}
+                disabled={busy || isPending}
                 className="bg-red-700 hover:bg-red-600 text-white"
               >
-                {busy ? 'Removing…' : 'Remove'}
+                {busy ? 'Removing…' : isPending ? 'Updating…' : 'Remove'}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>

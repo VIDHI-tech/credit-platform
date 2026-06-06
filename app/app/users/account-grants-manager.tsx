@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase-browser'
 import { Button } from '@/components/ui/button'
@@ -42,6 +42,7 @@ export function AccountGrantsManager({
   const [expandedCreator, setExpandedCreator] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [isPending, startTransition] = useTransition()
 
   function hasGrant(userId: string, connectionId: string) {
     return grants.some(
@@ -91,7 +92,9 @@ export function AccountGrantsManager({
       if (data) setGrants((prev) => [...prev, data])
     }
     setBusy(null)
-    router.refresh()
+    startTransition(() => {
+      router.refresh()
+    })
   }
 
   async function grantAll(userId: string) {
@@ -119,7 +122,9 @@ export function AccountGrantsManager({
     }
     if (data) setGrants((prev) => [...prev, ...data])
     setBusy(null)
-    router.refresh()
+    startTransition(() => {
+      router.refresh()
+    })
   }
 
   async function revokeAll(userId: string) {
@@ -145,7 +150,9 @@ export function AccountGrantsManager({
     }
     setGrants((prev) => prev.filter((g) => g.user_id !== userId))
     setBusy(null)
-    router.refresh()
+    startTransition(() => {
+      router.refresh()
+    })
   }
 
   if (connections.length === 0) {
@@ -208,21 +215,30 @@ export function AccountGrantsManager({
                       variant="outline"
                       className="h-7 text-xs"
                       disabled={
-                        busy?.startsWith('all-') ||
+                        busy !== null ||
+                        isPending ||
                         count === connections.length
                       }
                       onClick={() => grantAll(creator.user_id)}
                     >
-                      Grant all
+                      {busy === `all-${creator.user_id}`
+                        ? 'Granting…'
+                        : isPending
+                          ? 'Updating…'
+                          : 'Grant all'}
                     </Button>
                     <Button
                       size="sm"
                       variant="outline"
                       className="h-7 text-xs text-red-400 border-red-900 hover:bg-red-950"
-                      disabled={busy?.startsWith('all-') || count === 0}
+                      disabled={busy !== null || isPending || count === 0}
                       onClick={() => revokeAll(creator.user_id)}
                     >
-                      Revoke all
+                      {busy === `all-${creator.user_id}`
+                        ? 'Revoking…'
+                        : isPending
+                          ? 'Updating…'
+                          : 'Revoke all'}
                     </Button>
                   </div>
 
@@ -230,17 +246,18 @@ export function AccountGrantsManager({
                     const granted = hasGrant(creator.user_id, conn.id)
                     const key = `${creator.user_id}-${conn.id}`
                     const isBusy = busy === key || busy === `all-${creator.user_id}`
+                    const isDisabled = busy !== null || isPending
                     return (
                       <button
                         key={conn.id}
                         type="button"
-                        disabled={isBusy}
+                        disabled={isDisabled}
                         onClick={() => toggleGrant(creator.user_id, conn.id)}
                         className={`w-full flex items-center justify-between gap-3 px-3 py-2 rounded-md border transition-colors ${
                           granted
                             ? 'border-lime-800 bg-lime-950/30'
                             : 'border-neutral-800 bg-neutral-900/30 hover:border-neutral-700'
-                        } ${isBusy ? 'opacity-50' : ''}`}
+                        } ${isBusy || (isPending && !isBusy) ? 'opacity-50' : ''}`}
                       >
                         <div className="min-w-0 text-left">
                           <div className="text-sm font-medium text-white truncate">

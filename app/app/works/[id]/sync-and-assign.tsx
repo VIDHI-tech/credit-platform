@@ -18,7 +18,7 @@
 // router.refresh() pulls the new server state so the Assigned + Wastage
 // tables below update.
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase-browser'
 import { Button } from '@/components/ui/button'
@@ -87,6 +87,11 @@ function MediaPreview({
 export function SyncAndAssign({ workId, clientId, clientName, userRole }: Props) {
   const router = useRouter()
   const [supabase] = useState(() => createClient())
+
+  // useTransition tracks router.refresh() as a pending React state so the
+  // button stays disabled until the server-rendered tree has actually updated
+  // — no flicker of "enabled" between the API response and the UI catching up.
+  const [isPending, startTransition] = useTransition()
 
   // Button-level
   const [syncing, setSyncing] = useState(false)
@@ -166,7 +171,11 @@ export function SyncAndAssign({ workId, clientId, clientName, userRole }: Props)
       setSelectedIds(new Set())
       setAccountFilter(null)
       setPickerOpen(true)
-      router.refresh() // keep the Assigned/Wastage tables fresh too
+      // Keep the Assigned/Wastage tables fresh too — wrapped in a transition
+      // so the Sync button stays disabled until the refresh completes.
+      startTransition(() => {
+        router.refresh()
+      })
     } catch (err) {
       setSyncError(
         `Sync failed: ${err instanceof Error ? err.message : 'network error'}`,
@@ -274,7 +283,11 @@ export function SyncAndAssign({ workId, clientId, clientName, userRole }: Props)
     setDestOpen(false)
     setPickerOpen(false)
     setSelectedIds(new Set())
-    router.refresh()
+    // Wrap in a transition so the action buttons stay disabled until the
+    // server-rendered Assigned/Wastage tables actually update.
+    startTransition(() => {
+      router.refresh()
+    })
   }
 
   return (
@@ -290,14 +303,14 @@ export function SyncAndAssign({ workId, clientId, clientName, userRole }: Props)
         <div className="flex-1 flex flex-col items-center justify-center px-6 py-8 gap-4">
           <Button
             onClick={handleSync}
-            disabled={syncing}
+            disabled={syncing || isPending}
             size="lg"
             className="bg-lime-400 hover:bg-lime-300 text-black font-semibold min-w-[14rem]"
           >
-            {syncing ? (
+            {syncing || isPending ? (
               <>
                 <RefreshCw className="size-4 mr-2 animate-spin" />
-                Syncing…
+                {syncing ? 'Syncing…' : 'Updating…'}
               </>
             ) : (
               <>
@@ -331,10 +344,10 @@ export function SyncAndAssign({ workId, clientId, clientName, userRole }: Props)
       {pickerOpen && (
         <div
           className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4"
-          onClick={() => !batchBusy && setPickerOpen(false)}
+          onClick={() => !batchBusy && !isPending && setPickerOpen(false)}
         >
           <div
-            className="bg-neutral-950 border border-neutral-800 rounded-lg max-w-3xl w-full max-h-[85vh] flex flex-col"
+            className="bg-neutral-950 border border-neutral-800 rounded-lg max-w-6xl w-full max-h-[90vh] flex flex-col"
             onClick={(e) => e.stopPropagation()}
           >
             {/* STICKY HEADER */}
@@ -354,7 +367,7 @@ export function SyncAndAssign({ workId, clientId, clientName, userRole }: Props)
                     size="sm"
                     variant="outline"
                     onClick={() => setPickerOpen(false)}
-                    disabled={batchBusy !== null}
+                    disabled={batchBusy !== null || isPending}
                     className="h-8 text-xs"
                   >
                     Cancel
@@ -362,7 +375,11 @@ export function SyncAndAssign({ workId, clientId, clientName, userRole }: Props)
                   <Button
                     size="sm"
                     onClick={openDestination}
-                    disabled={selectedIds.size === 0 || batchBusy !== null}
+                    disabled={
+                      selectedIds.size === 0 ||
+                      batchBusy !== null ||
+                      isPending
+                    }
                     className="h-8 text-xs bg-lime-400 hover:bg-lime-300 text-black font-semibold"
                   >
                     Assign ({selectedIds.size})
@@ -505,7 +522,7 @@ export function SyncAndAssign({ workId, clientId, clientName, userRole }: Props)
       {destOpen && (
         <div
           className="fixed inset-0 z-[60] bg-black/70 flex items-center justify-center p-4"
-          onClick={() => !batchBusy && setDestOpen(false)}
+          onClick={() => !batchBusy && !isPending && setDestOpen(false)}
         >
           <div
             className="bg-neutral-950 border border-neutral-800 rounded-lg max-w-md w-full flex flex-col"
@@ -524,8 +541,10 @@ export function SyncAndAssign({ workId, clientId, clientName, userRole }: Props)
               </div>
               <button
                 type="button"
-                onClick={() => !batchBusy && setDestOpen(false)}
-                disabled={batchBusy !== null}
+                onClick={() =>
+                  !batchBusy && !isPending && setDestOpen(false)
+                }
+                disabled={batchBusy !== null || isPending}
                 className="p-1 rounded hover:bg-neutral-800 transition-colors disabled:opacity-40"
               >
                 <X className="size-4 text-neutral-400" />
@@ -540,7 +559,7 @@ export function SyncAndAssign({ workId, clientId, clientName, userRole }: Props)
                 <Select
                   value={destClientId}
                   onValueChange={(v) => setDestClientId(v as string)}
-                  disabled={batchBusy !== null}
+                  disabled={batchBusy !== null || isPending}
                 >
                   <SelectTrigger className="mt-1 bg-neutral-900 border-neutral-700">
                     <SelectValue>
@@ -595,17 +614,25 @@ export function SyncAndAssign({ workId, clientId, clientName, userRole }: Props)
               <Button
                 variant="outline"
                 onClick={() => runBatch('waste')}
-                disabled={batchBusy !== null || selectedIds.size === 0}
+                disabled={batchBusy !== null || isPending || selectedIds.size === 0}
                 className="text-yellow-400 border-yellow-700 hover:bg-yellow-950"
               >
-                {batchBusy === 'waste' ? 'Marking…' : 'Wastage'}
+                {batchBusy === 'waste'
+                  ? 'Marking…'
+                  : isPending
+                    ? 'Updating…'
+                    : 'Wastage'}
               </Button>
               <Button
                 onClick={() => runBatch('actual')}
-                disabled={batchBusy !== null || selectedIds.size === 0}
+                disabled={batchBusy !== null || isPending || selectedIds.size === 0}
                 className="bg-lime-400 hover:bg-lime-300 text-black font-semibold"
               >
-                {batchBusy === 'actual' ? 'Assigning…' : 'Actual usage'}
+                {batchBusy === 'actual'
+                  ? 'Assigning…'
+                  : isPending
+                    ? 'Updating…'
+                    : 'Actual usage'}
               </Button>
             </div>
           </div>

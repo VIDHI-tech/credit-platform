@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase-browser'
 import {
@@ -26,32 +26,38 @@ export function StatusDropdown({ clientId, currentStatus }: Props) {
   const router = useRouter()
   const [status, setStatus] = useState<ClientStatus>(currentStatus)
   const [busy, setBusy] = useState(false)
+  const [isPending, startTransition] = useTransition()
 
   async function handleChange(value: string) {
     const newStatus = value as ClientStatus
     setStatus(newStatus)
     setBusy(true)
 
-    const supabase = createClient()
-    const { error } = await supabase
-      .from('clients')
-      .update({ status: newStatus })
-      .eq('id', clientId)
+    try {
+      const supabase = createClient()
+      const { error } = await supabase
+        .from('clients')
+        .update({ status: newStatus })
+        .eq('id', clientId)
 
-    if (error) {
-      console.error('Status update failed:', error)
-      setStatus(currentStatus) // revert on error
-    } else {
-      router.refresh()
+      if (error) {
+        console.error('Status update failed:', error)
+        setStatus(currentStatus) // revert on error
+      } else {
+        startTransition(() => {
+          router.refresh()
+        })
+      }
+    } finally {
+      setBusy(false)
     }
-    setBusy(false)
   }
 
   return (
     <Select
       value={status}
       onValueChange={(v) => handleChange(v as string)}
-      disabled={busy}
+      disabled={busy || isPending}
     >
       <SelectTrigger
         className={`w-36 h-8 text-xs border ${CLIENT_STATUS_COLORS[status]}`}

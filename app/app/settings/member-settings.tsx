@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase-browser'
 import { Button } from '@/components/ui/button'
@@ -16,14 +16,21 @@ export function MemberSettings({ membershipId, orgName, fullName }: Props) {
   const [open, setOpen] = useState(false)
   const [leaving, setLeaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [isPending, startTransition] = useTransition()
 
   async function handleLeave() {
     setLeaving(true)
-    const supabase = createClient()
-    const { error: e } = await supabase.from('memberships').delete().eq('id', membershipId)
-    if (e) { setError(e.message); setLeaving(false); return }
-    await supabase.auth.signOut()
-    router.push('/')
+    try {
+      const supabase = createClient()
+      const { error: e } = await supabase.from('memberships').delete().eq('id', membershipId)
+      if (e) { setError(e.message); return }
+      await supabase.auth.signOut()
+      startTransition(() => {
+        router.push('/')
+      })
+    } finally {
+      setLeaving(false)
+    }
   }
 
   return (
@@ -46,7 +53,7 @@ export function MemberSettings({ membershipId, orgName, fullName }: Props) {
           </div>
         </div>
         {!open ? (
-          <Button variant="outline" className="border-red-900 text-red-400 hover:bg-red-950" onClick={() => setOpen(true)}>
+          <Button variant="outline" disabled={leaving || isPending} className="border-red-900 text-red-400 hover:bg-red-950" onClick={() => setOpen(true)}>
             Leave {orgName}
           </Button>
         ) : (
@@ -54,10 +61,10 @@ export function MemberSettings({ membershipId, orgName, fullName }: Props) {
             <p className="text-neutral-300 text-sm">Are you sure? You will lose access immediately.</p>
             {error && <p className="text-red-400 text-sm">{error}</p>}
             <div className="flex gap-2">
-              <Button onClick={handleLeave} disabled={leaving} className="bg-red-700 hover:bg-red-600 text-white">
-                {leaving ? 'Leaving…' : 'Leave'}
+              <Button onClick={handleLeave} disabled={leaving || isPending} className="bg-red-700 hover:bg-red-600 text-white">
+                {leaving ? 'Leaving…' : isPending ? 'Leaving…' : 'Leave'}
               </Button>
-              <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
+              <Button variant="ghost" disabled={leaving || isPending} onClick={() => setOpen(false)}>Cancel</Button>
             </div>
           </div>
         )}
