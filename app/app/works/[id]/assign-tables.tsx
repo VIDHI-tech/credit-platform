@@ -1,10 +1,28 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+// app/app/works/[id]/assign-tables.tsx
+// Two columns below the credit-usage progress bar:
+//   - Assigned to client  (with per-row Unassign within 20s for the assigner;
+//     master/manager can unassign anytime)
+//   - Wastage             (with per-row Mark-Useful within 20s for the waster;
+//     master can mark useful anytime)
+//
+// The Unassigned generations table moved into the SyncAndAssign component
+// upstairs — this file no longer fetches/displays unassigned entries.
+//
+// A "Rework" tag is rendered on any generation whose work is currently in
+// the `rework` status. The work-status lookup is passed in from the server
+// component via workStatusMap.
+
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Undo2 } from 'lucide-react'
+import type { WorkStatus } from '@/lib/work-helpers'
+
+// Per spec: 20-second window for unassign-undo / mark-useful-undo.
+const UNDO_WINDOW_MS = 20000
 
 interface Generation {
   id: string
@@ -24,10 +42,10 @@ interface Generation {
 
 interface Props {
   workId: string
-  clientId: string
   clientName: string
-  unassigned: Generation[]
   assignedToClient: Generation[]
+  /** Map of work_id → status. Used to flag the "Rework" tag per row. */
+  workStatusMap: Record<string, WorkStatus>
   userRole: 'master' | 'manager' | 'creator'
   userId: string
 }
@@ -70,6 +88,17 @@ function MediaPreview({
   )
 }
 
+function ReworkTag() {
+  return (
+    <Badge
+      variant="outline"
+      className="text-orange-300 border-orange-700 bg-orange-950/40 text-[10px]"
+    >
+      Rework
+    </Badge>
+  )
+}
+
 function UnassignButton({
   generationId,
   assignedAt,
@@ -99,7 +128,7 @@ function UnassignButton({
 
     const assignedTime = new Date(assignedAt).getTime()
     function check() {
-      const remaining = 10000 - (Date.now() - assignedTime)
+      const remaining = UNDO_WINDOW_MS - (Date.now() - assignedTime)
       if (remaining <= 0) {
         setTimeLeft(0)
       } else {
@@ -128,7 +157,9 @@ function UnassignButton({
         onError(`Unassign failed: ${data.error || 'unknown error'}`)
       }
     } catch (err) {
-      onError(`Unassign failed: ${err instanceof Error ? err.message : 'network error'}`)
+      onError(
+        `Unassign failed: ${err instanceof Error ? err.message : 'network error'}`,
+      )
     } finally {
       setBusy(false)
     }
@@ -177,7 +208,7 @@ function WastageButton({
 
     const wastedTime = new Date(wastedAt).getTime()
     function check() {
-      const remaining = 10000 - (Date.now() - wastedTime)
+      const remaining = UNDO_WINDOW_MS - (Date.now() - wastedTime)
       if (remaining <= 0) {
         setTimeLeft(0)
       } else {
@@ -204,7 +235,9 @@ function WastageButton({
         onError(`Mark Useful failed: ${data.error || 'unknown error'}`)
       }
     } catch (err) {
-      onError(`Mark Useful failed: ${err instanceof Error ? err.message : 'network error'}`)
+      onError(
+        `Mark Useful failed: ${err instanceof Error ? err.message : 'network error'}`,
+      )
     } finally {
       setBusy(false)
     }
@@ -212,8 +245,11 @@ function WastageButton({
 
   if (!isWasted) return null
 
-  // Show useful button if within 10s (for the person who wasted it) or anytime for master
-  const showUsefulButton = (isWaster && timeLeft! > 0) || isMaster
+  // Show useful button only when the user is allowed:
+  //   - master  : anytime
+  //   - waster  : only within the 20s undo window
+  const isWithinWindow = isWaster && timeLeft !== null && timeLeft > 0
+  if (!isMaster && !isWithinWindow) return null
 
   return (
     <Button
@@ -223,10 +259,14 @@ function WastageButton({
       disabled={busy}
       className="h-6 text-xs px-2 text-lime-400 border-lime-700 hover:bg-lime-950"
     >
-      {busy ? '…' : (
+      {busy ? (
+        '…'
+      ) : (
         <>
           <Undo2 className="size-3 mr-1" />
-          {isWaster ? `Mark Useful (${timeLeft}s)` : 'Mark Useful'}
+          {isMaster && !isWithinWindow
+            ? 'Mark Useful'
+            : `Mark Useful (${timeLeft}s)`}
         </>
       )}
     </Button>
@@ -235,181 +275,49 @@ function WastageButton({
 
 export function AssignTables({
   workId,
-  clientId,
   clientName,
-  unassigned: allUnassigned,
   assignedToClient,
+  workStatusMap,
   userRole,
   userId,
 }: Props) {
   const router = useRouter()
-  const [syncing, setSyncing] = useState(false)
-  const [assigning, setAssigning] = useState<string | null>(null)
-  const [wasting, setWasting] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  // Split unassigned into useful and wasted
-  const useful = allUnassigned.filter((g) => !g.is_waste)
-  const wasted = allUnassigned.filter((g) => g.is_waste)
+  // Split assignedToClient into "useful + assigned" and "wasted" buckets.
+  const assignedUseful = assignedToClient.filter((g) => !g.is_waste)
+  const wasted = assignedToClient.filter((g) => g.is_waste)
+  const assignedToThisWork = assignedUseful.filter((g) => g.work_id === workId)
+  const assignedElsewhere = assignedUseful.filter((g) => g.work_id !== workId)
 
-  async function handleSync() {
-    setSyncing(true)
-    setError(null)
-    const res = await fetch('/api/hf-sync', { method: 'POST' })
-    setSyncing(false)
-    if (res.status === 409) {
-      if (userRole === 'master') {
-        setError('No Higgsfield account connected. Go to Settings to add one.')
-      } else {
-        setError('You don\'t have access to any Higgsfield account yet. Ask your admin to grant you access.')
-      }
-      return
-    }
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}))
-      setError(`Sync failed: ${data.error || 'unknown'}`)
-      return
-    }
-    router.refresh()
+  function renderReworkTag(genWorkId: string | null) {
+    if (!genWorkId) return null
+    const status = workStatusMap[genWorkId]
+    if (status !== 'rework') return null
+    return (
+      <span className="ml-1 inline-flex align-middle">
+        <ReworkTag />
+      </span>
+    )
   }
-
-  async function handleAssign(generationId: string) {
-    setAssigning(generationId)
-    setError(null)
-    const res = await fetch(`/api/works/${workId}/assign-generation`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ generationId, clientId }),
-    })
-    setAssigning(null)
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}))
-      setError(`Assign failed: ${data.error || 'unknown'}`)
-      return
-    }
-    router.refresh()
-  }
-
-  async function handleMarkWaste(generationId: string) {
-    setWasting(generationId)
-    setError(null)
-    const res = await fetch(`/api/generations/${generationId}/waste`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ is_waste: true }),
-    })
-    setWasting(null)
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}))
-      setError(`Failed: ${data.error || 'unknown'}`)
-      return
-    }
-    router.refresh()
-  }
-
-  const assignedToThisWork = assignedToClient.filter((g) => g.work_id === workId)
-  const assignedElsewhere = assignedToClient.filter((g) => g.work_id !== workId)
 
   return (
     <div className="space-y-3">
       {error && (
         <div className="bg-red-950/50 border border-red-800 text-red-300 px-3 py-2 rounded text-sm flex items-center justify-between">
           <span>{error}</span>
-          {error.includes('Settings') && (
-            <a href="/app/settings" className="text-lime-400 hover:underline text-xs ml-4">
-              Open Settings →
-            </a>
-          )}
+          <button
+            type="button"
+            onClick={() => setError(null)}
+            className="text-neutral-400 hover:text-white text-xs ml-4"
+          >
+            dismiss
+          </button>
         </div>
       )}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* TABLE A: UNASSIGNED (Useful) */}
-        <div className="bg-neutral-950 border border-neutral-800 rounded-lg overflow-hidden">
-          <div className="px-4 py-3 border-b border-neutral-800 flex items-center justify-between">
-            <div>
-              <h2 className="font-semibold text-white text-sm">
-                Unassigned Generations
-              </h2>
-              <p className="text-xs text-neutral-500">
-                {useful.length} pending · ready to use
-              </p>
-            </div>
-            <Button
-              onClick={handleSync}
-              disabled={syncing}
-              size="sm"
-              className="bg-lime-400 hover:bg-lime-300 text-black font-semibold"
-            >
-              {syncing ? '…' : '⟳ Sync'}
-            </Button>
-          </div>
-          {useful.length === 0 ? (
-            <div className="p-6 text-center text-neutral-500 text-sm">
-              <p>No unassigned generations.</p>
-              <p className="text-xs mt-1">Click Sync to pull from Higgsfield.</p>
-            </div>
-          ) : (
-            <div className="max-h-[500px] overflow-auto">
-              <table className="w-full text-xs">
-                <tbody className="divide-y divide-neutral-800">
-                  {useful.map((g) => (
-                    <tr key={g.id} className="hover:bg-neutral-900/60">
-                      <td className="px-2 py-2">
-                        <MediaPreview
-                          url={g.result_url}
-                          mediaType={g.media_type}
-                          name={g.display_name}
-                        />
-                      </td>
-                      <td className="px-2 py-2">
-                        <div className="font-medium text-white">
-                          {g.display_name}
-                        </div>
-                        {g.hf_connection_label && (
-                          <div className="text-xs text-neutral-500 mt-0.5">
-                            from <span className="text-lime-400">{g.hf_connection_label}</span>
-                          </div>
-                        )}
-                      </td>
-                      <td className="px-2 py-2 text-right">
-                        <span
-                          className={`font-bold ${parseFloat(g.credits) > 0 ? 'text-orange-400' : 'text-neutral-500'}`}
-                        >
-                          {parseFloat(g.credits) > 0
-                            ? parseFloat(g.credits).toFixed(1)
-                            : 'free'}
-                        </span>
-                      </td>
-                      <td className="px-2 py-2">
-                        <div className="flex items-center gap-1">
-                          <Button
-                            size="sm"
-                            onClick={() => handleAssign(g.id)}
-                            disabled={assigning === g.id}
-                            className="bg-lime-400 hover:bg-lime-300 text-black font-semibold h-6 text-xs px-2"
-                          >
-                            {assigning === g.id ? '…' : 'Assign'}
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => handleMarkWaste(g.id)}
-                            disabled={wasting === g.id}
-                            className="h-6 text-xs px-2 text-yellow-400 border-yellow-700 hover:bg-yellow-950"
-                          >
-                            {wasting === g.id ? '…' : 'Wastage'}
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
 
-        {/* TABLE B: ASSIGNED TO THIS CLIENT */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* ASSIGNED TO THIS CLIENT */}
         <div className="bg-neutral-950 border border-neutral-800 rounded-lg overflow-hidden">
           <div className="px-4 py-3 border-b border-neutral-800">
             <h2 className="font-semibold text-white text-sm">
@@ -420,7 +328,7 @@ export function AssignTables({
               {assignedElsewhere.length} on other works
             </p>
           </div>
-          {assignedToClient.length === 0 ? (
+          {assignedUseful.length === 0 ? (
             <div className="p-6 text-center text-neutral-500 text-sm">
               <p>Nothing assigned to {clientName} yet.</p>
             </div>
@@ -428,7 +336,7 @@ export function AssignTables({
             <div className="max-h-[500px] overflow-auto">
               <table className="w-full text-xs">
                 <tbody className="divide-y divide-neutral-800">
-                  {assignedToClient.map((g) => (
+                  {assignedUseful.map((g) => (
                     <tr
                       key={g.id}
                       className={g.work_id === workId ? 'bg-lime-950/20' : ''}
@@ -445,7 +353,7 @@ export function AssignTables({
                           {g.display_name}
                         </div>
                         <div className="text-neutral-500 text-xs mt-0.5 space-y-0.5">
-                          <div>
+                          <div className="flex items-center gap-1.5 flex-wrap">
                             {g.work_id === workId ? (
                               <Badge
                                 variant="outline"
@@ -456,10 +364,14 @@ export function AssignTables({
                             ) : (
                               <span className="text-neutral-600">other work</span>
                             )}
+                            {renderReworkTag(g.work_id)}
                           </div>
                           {g.hf_connection_label && (
                             <div className="text-neutral-500 text-xs">
-                              from <span className="text-lime-400">{g.hf_connection_label}</span>
+                              from{' '}
+                              <span className="text-lime-400">
+                                {g.hf_connection_label}
+                              </span>
                             </div>
                           )}
                         </div>
@@ -492,13 +404,16 @@ export function AssignTables({
           )}
         </div>
 
-        {/* TABLE C: WASTAGE */}
+        {/* WASTAGE */}
         <div className="bg-neutral-950 border border-red-900/50 rounded-lg overflow-hidden">
           <div className="px-4 py-3 border-b border-neutral-800">
             <h2 className="font-semibold text-white text-sm flex items-center gap-2">
               Wastage
               {wasted.length > 0 && (
-                <Badge variant="outline" className="text-red-400 border-red-700">
+                <Badge
+                  variant="outline"
+                  className="text-red-400 border-red-700"
+                >
                   {wasted.length}
                 </Badge>
               )}
@@ -516,7 +431,10 @@ export function AssignTables({
               <table className="w-full text-xs">
                 <tbody className="divide-y divide-neutral-800">
                   {wasted.map((g) => (
-                    <tr key={g.id} className="bg-red-950/10 hover:bg-red-950/20">
+                    <tr
+                      key={g.id}
+                      className="bg-red-950/10 hover:bg-red-950/20"
+                    >
                       <td className="px-2 py-2">
                         <MediaPreview
                           url={g.result_url}
@@ -529,12 +447,21 @@ export function AssignTables({
                           {g.display_name}
                         </div>
                         <div className="text-xs text-neutral-600 mt-0.5 space-y-0.5">
-                          <div>
-                            Marked {g.wasted_at ? new Date(g.wasted_at).toLocaleTimeString() : ''}
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span>
+                              Marked{' '}
+                              {g.wasted_at
+                                ? new Date(g.wasted_at).toLocaleTimeString()
+                                : ''}
+                            </span>
+                            {renderReworkTag(g.work_id)}
                           </div>
                           {g.hf_connection_label && (
                             <div className="text-neutral-600">
-                              from <span className="text-red-400">{g.hf_connection_label}</span>
+                              from{' '}
+                              <span className="text-red-400">
+                                {g.hf_connection_label}
+                              </span>
                             </div>
                           )}
                         </div>

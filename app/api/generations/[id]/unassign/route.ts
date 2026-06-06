@@ -1,5 +1,6 @@
 // app/api/generations/[id]/unassign/route.ts — unassign a generation from its client/work.
-// Creator: only within 10s of assignment. Master/manager: anytime.
+// Creator: only within 20s of assignment. Master/manager: anytime.
+// (Window kept in sync with the client-side countdown in assign-tables.tsx.)
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 
@@ -45,7 +46,7 @@ export async function POST(
     const isMasterOrManager = membership.role === 'master' || membership.role === 'manager'
 
     if (!isMasterOrManager) {
-      // Creator: must be the one who assigned it, within 10s
+      // Creator: must be the one who assigned it, within 20s
       if (gen.assigned_by !== user.id) {
         return NextResponse.json(
           { error: 'You did not assign this generation' },
@@ -54,9 +55,9 @@ export async function POST(
       }
       if (gen.assigned_at) {
         const elapsed = Date.now() - new Date(gen.assigned_at).getTime()
-        if (elapsed > 10000) {
+        if (elapsed > 20000) {
           return NextResponse.json(
-            { error: 'Unassign window expired (10 seconds)' },
+            { error: 'Unassign window expired (20 seconds)' },
             { status: 403 }
           )
         }

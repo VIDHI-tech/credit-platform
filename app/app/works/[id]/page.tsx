@@ -1,4 +1,9 @@
-// app/app/works/[id]/page.tsx — work detail: status actions + two-table assign.
+// app/app/works/[id]/page.tsx — work detail
+// LAYOUT (Phase 6+):
+//   Top: header, meta cards, [Schedule | SyncAndAssign] (50/50 split)
+//   Below the credit-progress bar: 2-column grid (Assigned | Wastage).
+// The standalone "Unassigned generations" card has been removed — its
+// content moved into the Sync & Assign modal opened from the right column.
 import { requireActiveMembership } from "@/lib/auth-helpers";
 import { createClient } from "@/lib/supabase-server";
 import { notFound } from "next/navigation";
@@ -13,6 +18,7 @@ import {
 import { can } from "@/lib/rbac";
 import { StatusActionButtons } from "./status-action-buttons";
 import { AssignTables } from "./assign-tables";
+import { SyncAndAssign } from "./sync-and-assign";
 import { InstructionsViewer } from "./instructions-viewer";
 import { ScheduleCalendar } from "./schedule-calendar";
 import { WorkActions } from "./work-actions";
@@ -51,22 +57,35 @@ export default async function WorkDetailPage({ params }: PageProps) {
       .maybeSingle(),
   ]);
 
-  const [{ data: unassigned }, { data: assignedToClient }] = await Promise.all([
-    supabase
-      .from("generations")
-      .select(
-        "id, display_name, result_url, media_type, credits, hf_created_at, work_id, assigned_at, assigned_by, is_waste, hf_connection_label",
-      )
-      .is("client_id", null)
-      .order("hf_created_at", { ascending: false }),
-    supabase
-      .from("generations")
-      .select(
-        "id, display_name, result_url, media_type, credits, hf_created_at, work_id, assigned_at, assigned_by, is_waste, hf_connection_label",
-      )
-      .eq("client_id", work.client_id)
-      .order("hf_created_at", { ascending: false }),
-  ]);
+  // Only fetch generations that belong to THIS work's client — the
+  // assigned + wastage tables below the progress bar. (Unassigned ones live
+  // in the Sync & Assign modal and are fetched client-side after sync.)
+  const { data: assignedToClient } = await supabase
+    .from("generations")
+    .select(
+      "id, display_name, result_url, media_type, credits, hf_created_at, work_id, assigned_at, assigned_by, is_waste, wasted_at, wasted_by, hf_connection_label",
+    )
+    .eq("client_id", work.client_id)
+    .order("hf_created_at", { ascending: false });
+
+  // Batch-fetch statuses for every work referenced by an assigned generation
+  // so the AssignTables row can flag a "Rework" tag without an N+1.
+  const referencedWorkIds = Array.from(
+    new Set(
+      (assignedToClient || [])
+        .map((g) => g.work_id)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  );
+  const { data: relatedWorks } = referencedWorkIds.length
+    ? await supabase
+        .from("works")
+        .select("id, status")
+        .in("id", referencedWorkIds)
+    : { data: [] as { id: string; status: string }[] };
+  const workStatusMap: Record<string, WorkStatus> = Object.fromEntries(
+    (relatedWorks || []).map((w) => [w.id, w.status as WorkStatus]),
+  );
 
   const usedCredits = (assignedToClient || [])
     .filter((g) => g.work_id === work.id)
@@ -148,7 +167,7 @@ export default async function WorkDetailPage({ params }: PageProps) {
         </div>
       </div>
 
-      {/* META: Type + Budget (Schedule moved to a calendar below) */}
+      {/* META: Type + Budget */}
       <div className="grid grid-cols-2 gap-4 mt-6 mb-6">
         <div className="bg-neutral-950 border border-neutral-800 rounded-lg p-3">
           <div className="text-xs text-neutral-500 uppercase tracking-wider">
@@ -172,31 +191,47 @@ export default async function WorkDetailPage({ params }: PageProps) {
         </div>
       </div>
 
-      {/* SCHEDULE (read-only range calendar) */}
-      <section className="bg-neutral-950 border border-neutral-800 rounded-lg overflow-hidden mb-6">
-        <div className="px-4 py-3 border-b border-neutral-800 flex items-center justify-between">
-          <div>
-            <h2 className="font-semibold text-white text-sm">Schedule</h2>
-            <p className="text-xs text-neutral-500 mt-0.5">
-              {work.start_date && work.end_date
-                ? `${new Date(work.start_date).toLocaleDateString("en-US")} → ${new Date(work.end_date).toLocaleDateString("en-US")}`
-                : work.start_date
-                  ? `Starts ${new Date(work.start_date).toLocaleDateString("en-US")}`
-                  : work.end_date
-                    ? `Due ${new Date(work.end_date).toLocaleDateString("en-US")}`
-                    : "No dates set"}
-            </p>
-          </div>
-          {(work.start_time || work.end_time) && (
-            <div className="text-xs text-neutral-500">
-              {work.start_time && <span>Start {work.start_time}</span>}
-              {work.start_time && work.end_time && " · "}
-              {work.end_time && <span>End {work.end_time}</span>}
+      {/* 50/50: SCHEDULE (left) + SYNC & ASSIGN (right) */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+        {/* SCHEDULE */}
+        <section className="bg-neutral-950 border border-neutral-800 rounded-lg overflow-hidden flex flex-col">
+          <div className="px-4 py-3 border-b border-neutral-800 flex items-center justify-between">
+            <div>
+              <h2 className="font-semibold text-white text-sm">Schedule</h2>
+              <p className="text-xs text-neutral-500 mt-0.5">
+                {work.start_date && work.end_date
+                  ? `${new Date(work.start_date).toLocaleDateString("en-US")} → ${new Date(work.end_date).toLocaleDateString("en-US")}`
+                  : work.start_date
+                    ? `Starts ${new Date(work.start_date).toLocaleDateString("en-US")}`
+                    : work.end_date
+                      ? `Due ${new Date(work.end_date).toLocaleDateString("en-US")}`
+                      : "No dates set"}
+              </p>
             </div>
-          )}
-        </div>
-        <ScheduleCalendar startDate={work.start_date} endDate={work.end_date} />
-      </section>
+            {(work.start_time || work.end_time) && (
+              <div className="text-xs text-neutral-500">
+                {work.start_time && <span>Start {work.start_time}</span>}
+                {work.start_time && work.end_time && " · "}
+                {work.end_time && <span>End {work.end_time}</span>}
+              </div>
+            )}
+          </div>
+          <div className="flex-1">
+            <ScheduleCalendar
+              startDate={work.start_date}
+              endDate={work.end_date}
+            />
+          </div>
+        </section>
+
+        {/* SYNC & ASSIGN */}
+        <SyncAndAssign
+          workId={work.id}
+          clientId={work.client_id}
+          clientName={client?.name || ""}
+          userRole={membership.role as "master" | "manager" | "creator"}
+        />
+      </div>
 
       {/* CREDIT PROGRESS (if max set) */}
       {maxCredits !== null && maxCredits > 0 && (
@@ -232,13 +267,12 @@ export default async function WorkDetailPage({ params }: PageProps) {
         </section>
       )}
 
-      {/* THE TWO TABLES — credit attribution */}
+      {/* ASSIGNED + WASTAGE — 2-column below the progress bar */}
       <AssignTables
         workId={work.id}
-        clientId={work.client_id}
         clientName={client?.name || ""}
-        unassigned={(unassigned || []) as any}
-        assignedToClient={(assignedToClient || []) as any}
+        assignedToClient={(assignedToClient || []) as never}
+        workStatusMap={workStatusMap}
         userRole={membership.role as "master" | "manager" | "creator"}
         userId={membership.user_id}
       />

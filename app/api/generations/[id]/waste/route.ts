@@ -21,7 +21,11 @@ export async function POST(
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
     }
 
-    // Any active member can mark as waste; only master/manager can un-waste
+    // Any active member can mark as waste. Un-waste rules:
+    //   - master            : anytime
+    //   - manager           : anytime
+    //   - creator (waster)  : only within 20s of their own waste action
+    //   - creator (other)   : never
     const { data: membership } = await supabase
       .from('memberships')
       .select('role')
@@ -33,10 +37,33 @@ export async function POST(
     }
 
     if (!is_waste && membership.role === 'creator') {
-      return NextResponse.json(
-        { error: 'Only master/manager can un-waste' },
-        { status: 403 }
-      )
+      // Creator un-waste: must be the waster AND within the 20s window.
+      const { data: gen } = await supabase
+        .from('generations')
+        .select('wasted_by, wasted_at')
+        .eq('id', generationId)
+        .maybeSingle()
+      if (!gen) {
+        return NextResponse.json(
+          { error: 'Generation not found' },
+          { status: 404 }
+        )
+      }
+      if (gen.wasted_by !== user.id) {
+        return NextResponse.json(
+          { error: 'You did not mark this as waste' },
+          { status: 403 }
+        )
+      }
+      if (gen.wasted_at) {
+        const elapsed = Date.now() - new Date(gen.wasted_at).getTime()
+        if (elapsed > 20000) {
+          return NextResponse.json(
+            { error: 'Mark-useful window expired (20 seconds)' },
+            { status: 403 }
+          )
+        }
+      }
     }
 
     const updateData = is_waste
