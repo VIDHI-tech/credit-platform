@@ -82,8 +82,14 @@ CREATE POLICY "Update org generations" ON generations
     )
   );
 
--- (Insert policy unchanged: any active member can sync into their org. The sync
---  route only pulls from accounts the user can access, and stamps hf_connection_id.)
+-- Insert policy: any active member can sync into their org.
+-- The sync route validates they only pull from accounts they have access to.
+DROP POLICY IF EXISTS "Insert org generations" ON generations;
+CREATE POLICY "Insert org generations" ON generations
+  FOR INSERT TO authenticated
+  WITH CHECK (
+    org_id IN (SELECT user_active_org_ids())
+  );
 
 -- ===== VERIFICATION (optional) =====
 -- SELECT column_name FROM information_schema.columns
