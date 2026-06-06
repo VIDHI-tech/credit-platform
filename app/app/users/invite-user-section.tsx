@@ -12,7 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { X } from 'lucide-react'
+import { X, Check } from 'lucide-react'
 
 type Role = 'master' | 'manager' | 'creator'
 
@@ -22,31 +22,40 @@ const ROLE_LABELS: Record<Role, string> = {
   creator: 'Creator',
 }
 
+interface HfConnection {
+  id: string
+  label: string
+  hf_email: string | null
+}
+
 interface Invitation {
   id: string
   email: string
   role: string
   created_at: string
   used_at: string | null
+  connection_ids: string[]
 }
 
 interface Props {
   orgId: string
+  connections: HfConnection[]
   initialInvitations: Invitation[]
 }
 
-export function InviteUserSection({ orgId, initialInvitations }: Props) {
+export function InviteUserSection({ orgId, connections, initialInvitations }: Props) {
   const router = useRouter()
   const [supabase] = useState(() => createClient())
   const [invitations, setInvitations] = useState<Invitation[]>(initialInvitations)
   const [email, setEmail] = useState('')
   const [role, setRole] = useState<Role>('creator')
+  const [selectedConnIds, setSelectedConnIds] = useState<Set<string>>(new Set())
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [newJoiner, setNewJoiner] = useState<string | null>(null)
 
-  // Realtime: watch for used_at being set (invitation accepted)
+  // Realtime watch for accepted invitations
   useEffect(() => {
     const channel = supabase
       .channel('invitations-watch')
@@ -63,11 +72,10 @@ export function InviteUserSection({ orgId, initialInvitations }: Props) {
           setInvitations(prev =>
             prev.map(i => i.id === updated.id ? { ...i, used_at: updated.used_at } : i)
           )
-          // Show a flash notification if just joined
           if (updated.used_at && !payload.old.used_at) {
             setNewJoiner(updated.email)
             setTimeout(() => setNewJoiner(null), 6000)
-            router.refresh() // refresh page so they appear in Active Members too
+            router.refresh()
           }
         }
       )
@@ -76,11 +84,34 @@ export function InviteUserSection({ orgId, initialInvitations }: Props) {
     return () => { void supabase.removeChannel(channel) }
   }, [supabase, orgId, router])
 
+  function toggleConn(connId: string) {
+    setSelectedConnIds(prev => {
+      const next = new Set(prev)
+      if (next.has(connId)) next.delete(connId)
+      else next.add(connId)
+      return next
+    })
+  }
+
+  function selectAllConns() {
+    setSelectedConnIds(new Set(connections.map(c => c.id)))
+  }
+
+  function clearConns() {
+    setSelectedConnIds(new Set())
+  }
+
   async function handleInvite() {
     const trimmed = email.trim().toLowerCase()
     if (!trimmed) return
     if (!trimmed.includes('@')) {
       setError('Please enter a valid email address')
+      return
+    }
+
+    // Validate: non-master roles should have at least one HF account
+    if (role !== 'master' && selectedConnIds.size === 0 && connections.length > 0) {
+      setError(`Pick at least one Higgsfield account for this ${ROLE_LABELS[role]}`)
       return
     }
 
@@ -99,8 +130,9 @@ export function InviteUserSection({ orgId, initialInvitations }: Props) {
           email: trimmed,
           role,
           invited_by: user.id,
+          connection_ids: Array.from(selectedConnIds),
         })
-        .select('id, email, role, created_at, used_at')
+        .select('id, email, role, created_at, used_at, connection_ids')
         .single()
 
       if (e) {
@@ -111,10 +143,14 @@ export function InviteUserSection({ orgId, initialInvitations }: Props) {
       }
 
       if (data) {
-        setInvitations(prev => [data, ...prev])
+        setInvitations(prev => [{ ...data, connection_ids: data.connection_ids || [] }, ...prev])
         setEmail('')
-        setSuccess(`Invitation sent to ${trimmed}. They will be auto-approved as ${ROLE_LABELS[role]} when they sign up.`)
-        setTimeout(() => setSuccess(null), 5000)
+        setSelectedConnIds(new Set())
+        const accountText = selectedConnIds.size > 0
+          ? ` with access to ${selectedConnIds.size} HF account${selectedConnIds.size === 1 ? '' : 's'}`
+          : ''
+        setSuccess(`Invited ${trimmed} as ${ROLE_LABELS[role]}${accountText}. They'll be auto-approved on signup.`)
+        setTimeout(() => setSuccess(null), 6000)
       }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to invite')
@@ -143,43 +179,125 @@ export function InviteUserSection({ orgId, initialInvitations }: Props) {
       <div className="px-4 py-3 border-b border-neutral-800">
         <h2 className="font-semibold text-white">Invite Users</h2>
         <p className="text-xs text-neutral-500 mt-0.5">
-          Pre-approve an email so they skip the pending queue when they sign up or log in.
+          Pre-approve an email and pick which Higgsfield accounts they can sync from.
+          They&apos;ll skip the pending queue when they sign in.
         </p>
       </div>
 
       <div className="p-4 space-y-4">
         {/* INVITE FORM */}
-        <div className="flex gap-2">
-          <Input
-            type="email"
-            value={email}
-            onChange={e => setEmail(e.target.value)}
-            placeholder="user@example.com"
-            className="flex-1 bg-neutral-900 border-neutral-700 text-white"
-            onKeyDown={e => { if (e.key === 'Enter') handleInvite() }}
-            disabled={sending}
-          />
-          <Select value={role} onValueChange={v => setRole(v as Role)}>
-            <SelectTrigger className="w-28 bg-neutral-900 border-neutral-700">
-              <SelectValue>
-                {(v) => {
-                  const val = v as Role | null
-                  return val ? ROLE_LABELS[val] : 'Role'
-                }}
-              </SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="creator">Creator</SelectItem>
-              <SelectItem value="manager">Manager</SelectItem>
-              <SelectItem value="master">Master</SelectItem>
-            </SelectContent>
-          </Select>
+        <div className="space-y-3">
+          <div className="flex gap-2">
+            <Input
+              type="email"
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              placeholder="user@example.com"
+              className="flex-1 bg-neutral-900 border-neutral-700 text-white"
+              onKeyDown={e => { if (e.key === 'Enter') handleInvite() }}
+              disabled={sending}
+            />
+            <Select value={role} onValueChange={v => setRole(v as Role)}>
+              <SelectTrigger className="w-28 bg-neutral-900 border-neutral-700">
+                <SelectValue>
+                  {(v) => {
+                    const val = v as Role | null
+                    return val ? ROLE_LABELS[val] : 'Role'
+                  }}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="creator">Creator</SelectItem>
+                <SelectItem value="manager">Manager</SelectItem>
+                <SelectItem value="master">Master</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* HF ACCOUNTS PICKER */}
+          {connections.length > 0 && role !== 'master' && (
+            <div className="bg-neutral-900 border border-neutral-800 rounded-lg p-3">
+              <div className="flex items-center justify-between mb-2">
+                <div>
+                  <div className="text-sm font-medium text-white">
+                    Higgsfield Accounts Access
+                  </div>
+                  <div className="text-xs text-neutral-500">
+                    Pick which accounts this user can sync from
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={selectAllConns}
+                    className="text-xs text-lime-400 hover:underline"
+                  >
+                    Select all
+                  </button>
+                  <span className="text-neutral-700">·</span>
+                  <button
+                    type="button"
+                    onClick={clearConns}
+                    className="text-xs text-neutral-400 hover:underline"
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
+              <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                {connections.map(conn => {
+                  const checked = selectedConnIds.has(conn.id)
+                  return (
+                    <button
+                      key={conn.id}
+                      type="button"
+                      onClick={() => toggleConn(conn.id)}
+                      className={`w-full flex items-center justify-between gap-3 px-3 py-2 rounded-md border transition-colors ${
+                        checked
+                          ? 'border-lime-800 bg-lime-950/30'
+                          : 'border-neutral-800 bg-neutral-900/30 hover:border-neutral-700'
+                      }`}
+                    >
+                      <div className="min-w-0 text-left">
+                        <div className="text-sm font-medium text-white truncate">
+                          {conn.label}
+                        </div>
+                        {conn.hf_email && (
+                          <div className="text-xs text-neutral-500 truncate">
+                            {conn.hf_email}
+                          </div>
+                        )}
+                      </div>
+                      {checked ? (
+                        <div className="size-5 rounded-full bg-lime-400 flex items-center justify-center shrink-0">
+                          <Check className="size-3 text-black" />
+                        </div>
+                      ) : (
+                        <div className="size-5 rounded-full border-2 border-neutral-600 shrink-0" />
+                      )}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {connections.length === 0 && role !== 'master' && (
+            <div className="bg-yellow-950/30 border border-yellow-900 text-yellow-300 text-xs px-3 py-2 rounded">
+              No Higgsfield accounts connected yet. Add one in{' '}
+              <a href="/app/settings" className="text-lime-400 hover:underline">
+                Settings
+              </a>{' '}
+              first so the invitee can sync.
+            </div>
+          )}
+
           <Button
             onClick={handleInvite}
             disabled={sending || !email.trim()}
-            className="bg-lime-400 text-black hover:bg-lime-300 font-semibold"
+            className="w-full bg-lime-400 text-black hover:bg-lime-300 font-semibold"
           >
-            {sending ? 'Inviting…' : 'Invite'}
+            {sending ? 'Inviting…' : 'Send Invitation'}
           </Button>
         </div>
 
@@ -207,24 +325,36 @@ export function InviteUserSection({ orgId, initialInvitations }: Props) {
               Pending Invitations ({pending.length})
             </h3>
             <div className="divide-y divide-neutral-800 bg-neutral-900 rounded-lg overflow-hidden">
-              {pending.map(inv => (
-                <div key={inv.id} className="px-3 py-2 flex items-center justify-between">
-                  <div>
-                    <span className="text-sm text-white">{inv.email}</span>
-                    <span className="text-xs text-neutral-500 ml-2 capitalize">
-                      {inv.role}
-                    </span>
+              {pending.map(inv => {
+                const grantedCount = inv.connection_ids?.length || 0
+                return (
+                  <div key={inv.id} className="px-3 py-2 flex items-center justify-between">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-white">{inv.email}</span>
+                        <span className="text-xs text-neutral-500 capitalize">
+                          {inv.role}
+                        </span>
+                      </div>
+                      <div className="text-xs text-neutral-600 mt-0.5">
+                        {grantedCount > 0
+                          ? `${grantedCount} HF account${grantedCount === 1 ? '' : 's'} granted`
+                          : inv.role === 'master'
+                          ? '— master has full access'
+                          : 'No HF accounts granted'}
+                      </div>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => handleRevoke(inv.id)}
+                      className="h-6 w-6 p-0 text-neutral-500 hover:text-red-400"
+                    >
+                      <X className="size-3" />
+                    </Button>
                   </div>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => handleRevoke(inv.id)}
-                    className="h-6 w-6 p-0 text-neutral-500 hover:text-red-400"
-                  >
-                    <X className="size-3" />
-                  </Button>
-                </div>
-              ))}
+                )
+              })}
             </div>
           </div>
         )}

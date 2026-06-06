@@ -234,7 +234,11 @@ export function AssignTables({
     const res = await fetch('/api/hf-sync', { method: 'POST' })
     setSyncing(false)
     if (res.status === 409) {
-      setError('No Higgsfield account connected. Go to Settings to add one.')
+      if (userRole === 'master') {
+        setError('No Higgsfield account connected. Go to Settings to add one.')
+      } else {
+        setError('You don\'t have access to any Higgsfield account yet. Ask your admin to grant you access.')
+      }
       return
     }
     if (!res.ok) {

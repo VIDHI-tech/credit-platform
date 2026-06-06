@@ -35,7 +35,7 @@ export default async function UsersPage() {
       .eq('org_id', membership.org_id),
     supabase
       .from('invitations')
-      .select('id, email, role, created_at, used_at')
+      .select('id, email, role, created_at, used_at, connection_ids')
       .eq('org_id', membership.org_id)
       .order('created_at', { ascending: false }),
   ])
@@ -56,12 +56,18 @@ export default async function UsersPage() {
       {membership.role === 'master' && (
         <InviteUserSection
           orgId={membership.org_id}
+          connections={(connections || []).map((c) => ({
+            id: c.id,
+            label: c.label,
+            hf_email: c.hf_email,
+          }))}
           initialInvitations={(invitations || []).map(i => ({
             id: i.id,
             email: i.email,
             role: i.role,
             created_at: i.created_at,
             used_at: i.used_at,
+            connection_ids: i.connection_ids || [],
           }))}
         />
       )}
@@ -89,7 +95,15 @@ export default async function UsersPage() {
                     Requested {new Date(p.requested_at).toLocaleString()}
                   </div>
                 </div>
-                <ApprovalControls membershipId={p.id} userRole={membership.role} />
+                <ApprovalControls
+                  membershipId={p.id}
+                  userRole={membership.role}
+                  connections={(connections || []).map((c) => ({
+                    id: c.id,
+                    label: c.label,
+                    hf_email: c.hf_email,
+                  }))}
+                />
               </div>
             ))}
           </div>

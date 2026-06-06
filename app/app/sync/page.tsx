@@ -40,6 +40,12 @@ interface ClientTotal {
   generation_count: number
 }
 
+interface AccessibleAccount {
+  id: string
+  label: string
+  hf_email: string | null
+}
+
 function MediaPreview({
   url,
   mediaType,
@@ -86,9 +92,57 @@ export default function SyncPage() {
   const [unassigned, setUnassigned] = useState<Generation[]>([])
   const [clientTotals, setClientTotals] = useState<ClientTotal[]>([])
   const [assigning, setAssigning] = useState<string | null>(null)
+  const [userRole, setUserRole] = useState<string>('creator')
+  const [accessibleAccounts, setAccessibleAccounts] = useState<AccessibleAccount[]>([])
 
   // One client instance for the component's lifetime (avoids re-running effects).
   const [supabase] = useState(() => createClient())
+
+  const loadAccountAccess = useCallback(async () => {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+
+    const { data: membership } = await supabase
+      .from('memberships')
+      .select('role, org_id')
+      .eq('user_id', user.id)
+      .eq('status', 'active')
+      .limit(1)
+      .maybeSingle()
+
+    if (!membership) return
+    setUserRole(membership.role)
+
+    if (membership.role === 'master' || membership.role === 'manager') {
+      // Master/manager see all enabled accounts
+      const { data } = await supabase
+        .from('hf_connections')
+        .select('id, label, hf_email')
+        .eq('org_id', membership.org_id)
+        .eq('is_active', true)
+        .order('created_at', { ascending: true })
+      setAccessibleAccounts(data || [])
+    } else {
+      // Creator: only granted accounts (intersect with enabled)
+      const { data: grants } = await supabase
+        .from('hf_connection_grants')
+        .select('connection_id')
+        .eq('user_id', user.id)
+      const grantedIds = (grants || []).map(g => g.connection_id)
+      if (grantedIds.length === 0) {
+        setAccessibleAccounts([])
+        return
+      }
+      const { data } = await supabase
+        .from('hf_connections')
+        .select('id, label, hf_email')
+        .eq('org_id', membership.org_id)
+        .eq('is_active', true)
+        .in('id', grantedIds)
+        .order('created_at', { ascending: true })
+      setAccessibleAccounts(data || [])
+    }
+  }, [supabase])
 
   const loadData = useCallback(async () => {
     // RLS scopes everything to the user's org — no org_id filter needed here.
@@ -138,10 +192,11 @@ export default function SyncPage() {
 
   useEffect(() => {
     async function init() {
+      await loadAccountAccess()
       await loadData()
     }
     init()
-  }, [loadData])
+  }, [loadData, loadAccountAccess])
 
   async function handleSync() {
     setSyncing(true)
@@ -151,7 +206,11 @@ export default function SyncPage() {
       const res = await fetch('/api/hf-sync', { method: 'POST' })
       const data = await res.json()
       if (res.status === 409) {
-        setSyncError('No Higgsfield account connected. Go to Settings to add one.')
+        if (userRole === 'master') {
+          setSyncError('No Higgsfield account connected. Go to Settings to add one.')
+        } else {
+          setSyncError('You don\'t have access to any Higgsfield account yet. Ask your admin to grant you access.')
+        }
         return
       }
       if (!res.ok) throw new Error(data.error || 'Sync failed')
@@ -198,12 +257,50 @@ export default function SyncPage() {
         </div>
         <Button
           onClick={handleSync}
-          disabled={syncing}
+          disabled={syncing || accessibleAccounts.length === 0}
           className="bg-lime-400 hover:bg-lime-300 text-black font-semibold"
         >
           {syncing ? 'Syncing…' : '⟳ Sync from Higgsfield'}
         </Button>
       </div>
+
+      {/* ACCESSIBLE ACCOUNTS BANNER */}
+      {accessibleAccounts.length > 0 ? (
+        <div className="bg-neutral-950 border border-neutral-800 rounded-lg p-3">
+          <div className="text-xs text-neutral-500 mb-1.5">
+            Syncing from {accessibleAccounts.length} Higgsfield account
+            {accessibleAccounts.length === 1 ? '' : 's'} you have access to:
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {accessibleAccounts.map((acc) => (
+              <span
+                key={acc.id}
+                className="text-xs px-2 py-1 rounded border border-lime-800 bg-lime-950/30 text-lime-300"
+                title={acc.hf_email || ''}
+              >
+                {acc.label}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div className="bg-yellow-950/30 border border-yellow-900 text-yellow-300 px-4 py-3 rounded text-sm">
+          {userRole === 'master' ? (
+            <>
+              No Higgsfield accounts connected yet.{' '}
+              <a href="/app/settings" className="text-lime-400 hover:underline">
+                Add one in Settings
+              </a>{' '}
+              to start syncing.
+            </>
+          ) : (
+            <>
+              You don&apos;t have access to any Higgsfield account yet. Ask your
+              admin to grant you access from the Users page.
+            </>
+          )}
+        </div>
+      )}
 
       {syncMessage && (
         <div className="bg-green-950/50 border border-green-800 text-green-300 px-4 py-2 rounded text-sm">
