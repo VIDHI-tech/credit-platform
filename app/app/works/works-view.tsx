@@ -31,6 +31,8 @@ interface Props {
   works: WorkData[]
   clientNameMap: Record<string, string>
   creatorNameMap: Record<string, string>
+  /** Per-work ordered list of every creator user_id (primary first). */
+  creatorIdsByWork: Record<string, string[]>
   creditByWork: Record<string, number>
 }
 
@@ -38,6 +40,7 @@ export function WorksView({
   works,
   clientNameMap,
   creatorNameMap,
+  creatorIdsByWork,
   creditByWork,
 }: Props) {
   const [view, setView] = useState<ViewMode>('calendar')
@@ -101,7 +104,14 @@ export function WorksView({
                     </div>
                     <div className="text-xs text-neutral-500 mb-3">
                       {w.video_type && <span>{w.video_type} · </span>}
-                      {creatorNameMap[w.creator_id] || 'Unknown creator'}
+                      {(() => {
+                        const ids = creatorIdsByWork[w.id] || [w.creator_id]
+                        const names = ids.map(
+                          (id) => creatorNameMap[id] || 'Unknown',
+                        )
+                        if (names.length <= 2) return names.join(', ')
+                        return `${names.slice(0, 2).join(', ')} +${names.length - 2}`
+                      })()}
                     </div>
                     <div className="flex items-end justify-between pt-3 border-t border-neutral-800">
                       <div className="text-xs text-neutral-500">

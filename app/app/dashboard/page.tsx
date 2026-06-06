@@ -18,20 +18,34 @@ export default async function DashboardPage() {
   const isCreator = membership.role === 'creator'
 
   // Parallel fetch — RLS handles role-scoping automatically.
-  const [{ data: generations }, { data: clients }, { data: works }, { data: memberships }] =
-    await Promise.all([
-      supabase.from('generations').select('credits, client_id, work_id'),
-      supabase.from('clients').select('id, name, status'),
-      supabase
-        .from('works')
-        .select(
-          'id, title, video_type, status, end_date, end_time, client_id, creator_id, max_credits'
-        ),
-      supabase
-        .from('memberships')
-        .select('user_id, full_name')
-        .eq('status', 'active'),
-    ])
+  // work_creators is fetched so "my works" includes any work I co-own
+  // (multi-creator), not just the works where I'm the primary creator_id.
+  const [
+    { data: generations },
+    { data: clients },
+    { data: works },
+    { data: memberships },
+    { data: myWorkRows },
+  ] = await Promise.all([
+    supabase.from('generations').select('credits, client_id, work_id'),
+    supabase.from('clients').select('id, name, status'),
+    supabase
+      .from('works')
+      .select(
+        'id, title, video_type, status, end_date, end_time, client_id, creator_id, max_credits',
+      ),
+    supabase
+      .from('memberships')
+      .select('user_id, full_name')
+      .eq('status', 'active'),
+    supabase
+      .from('work_creators')
+      .select('work_id')
+      .eq('user_id', membership.user_id),
+  ])
+  const myWorkIdsFromJoin = new Set(
+    (myWorkRows || []).map((r) => r.work_id as string),
+  )
 
   // ===== AGGREGATIONS =====
   const totalCredits = (generations || []).reduce(
@@ -42,11 +56,14 @@ export default async function DashboardPage() {
     .filter((g) => !g.client_id)
     .reduce((s, g) => s + parseFloat(g.credits || '0'), 0)
 
-  const myWorkIds = new Set(
-    (works || [])
+  // "My works" = the union of (works.creator_id === me) AND
+  // (any work_creators row links me to the work). Multi-creator support.
+  const myWorkIds = new Set<string>([
+    ...(works || [])
       .filter((w) => w.creator_id === membership.user_id)
-      .map((w) => w.id)
-  )
+      .map((w) => w.id),
+    ...Array.from(myWorkIdsFromJoin),
+  ])
   const myCreditsUsed = (generations || [])
     .filter((g) => g.work_id && myWorkIds.has(g.work_id))
     .reduce((s, g) => s + parseFloat(g.credits || '0'), 0)
@@ -100,7 +117,7 @@ export default async function DashboardPage() {
 
   const needsAttention = isCreator
     ? (works || []).filter(
-        (w) => w.status === 'rework' && w.creator_id === membership.user_id
+        (w) => w.status === 'rework' && myWorkIds.has(w.id),
       )
     : (works || []).filter((w) => w.status === 'in_review')
 

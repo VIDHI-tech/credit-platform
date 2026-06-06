@@ -104,9 +104,20 @@ export default async function ClientDetailPage({
     .eq("client_id", id)
     .order("created_at", { ascending: false });
 
-  // Names for every user who either created a work OR assigned a generation.
+  // work_creators for every work on this client (multi-creator support).
+  const clientWorkIds = (works || []).map((w) => w.id);
+  const { data: clientWorkCreators } = clientWorkIds.length
+    ? await supabase
+        .from("work_creators")
+        .select("work_id, user_id, added_at")
+        .in("work_id", clientWorkIds)
+        .order("added_at", { ascending: true })
+    : { data: [] as { work_id: string; user_id: string; added_at: string }[] };
+
+  // Names for every user who created/co-owns a work OR assigned a generation.
   const userIds = new Set<string>();
   (works || []).forEach((w) => userIds.add(w.creator_id));
+  (clientWorkCreators || []).forEach((wc) => userIds.add(wc.user_id));
   (generations || []).forEach((g) => {
     if (g.assigned_by) userIds.add(g.assigned_by);
   });
@@ -202,6 +213,21 @@ export default async function ClientDetailPage({
   const workTitles: Record<string, string> = {};
   (works || []).forEach((w) => {
     workTitles[w.id] = w.title || w.video_type || "Untitled work";
+  });
+
+  // work_id → ordered creator id list (primary first), for the work row
+  // rendering below.
+  const additionalCreatorsByWork = new Map<string, string[]>();
+  (clientWorkCreators || []).forEach((wc) => {
+    const arr = additionalCreatorsByWork.get(wc.work_id) || [];
+    arr.push(wc.user_id);
+    additionalCreatorsByWork.set(wc.work_id, arr);
+  });
+  const creatorIdsByWork = new Map<string, string[]>();
+  (works || []).forEach((w) => {
+    const fromJoin = additionalCreatorsByWork.get(w.id) || [];
+    const others = fromJoin.filter((id) => id !== w.creator_id);
+    creatorIdsByWork.set(w.id, [w.creator_id, ...others]);
   });
 
   const status = client.status as ClientStatus;
@@ -350,7 +376,23 @@ export default async function ClientDetailPage({
                     </div>
                     <div className="text-xs text-neutral-500">
                       {w.video_type && <span>{w.video_type} · </span>}
-                      Creator: {userNameMap.get(w.creator_id) || "Unknown"}
+                      {(() => {
+                        const ids = creatorIdsByWork.get(w.id) || [
+                          w.creator_id,
+                        ];
+                        const names = ids.map(
+                          (id) => userNameMap.get(id) || "Unknown",
+                        );
+                        const label =
+                          names.length === 1
+                            ? "Creator"
+                            : `Creators (${names.length})`;
+                        const display =
+                          names.length <= 2
+                            ? names.join(", ")
+                            : `${names.slice(0, 2).join(", ")} +${names.length - 2}`;
+                        return `${label}: ${display}`;
+                      })()}
                       {w.end_date && (
                         <span>
                           {" "}

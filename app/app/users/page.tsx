@@ -161,6 +161,7 @@ export default async function UsersPage() {
                     <MemberHfAccess
                       orgId={membership.org_id}
                       memberUserId={a.user_id}
+                      memberFullName={a.full_name}
                       enabled={role !== 'master'}
                       connections={connectionsList}
                       initialGrants={grantsList}

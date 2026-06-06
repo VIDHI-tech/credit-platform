@@ -68,7 +68,19 @@ export async function PATCH(
     }
 
     const role = membership.role as Role
-    const isOwn = work.creator_id === user.id
+    // Multi-creator: any user listed in work_creators counts as "own",
+    // not just the primary creator_id. We still let the primary path
+    // short-circuit so we don't do an extra query when it's enough.
+    let isOwn = work.creator_id === user.id
+    if (!isOwn) {
+      const { data: coOwner } = await supabase
+        .from('work_creators')
+        .select('user_id')
+        .eq('work_id', id)
+        .eq('user_id', user.id)
+        .maybeSingle()
+      isOwn = !!coOwner
+    }
     const currentStatus = work.status as WorkStatus
 
     const rule = ALLOWED[to].find((r) => r.roles.includes(role))

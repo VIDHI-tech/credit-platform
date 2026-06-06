@@ -49,13 +49,23 @@ export async function POST(
       return NextResponse.json({ error: 'Not a member' }, { status: 403 })
     }
 
-    // The current work's own creator can assign to this work. For cross-
-    // client assignments, only master/manager can redirect credits.
+    // Any of the work's creators can assign to this work (multi-creator).
+    // For cross-client assignments, only master/manager can redirect credits.
     const isCrossClient = work.client_id !== clientId
+    let isCreator = work.creator_id === user.id
+    if (!isCreator && membership.role === 'creator' && !isCrossClient) {
+      const { data: coOwner } = await supabase
+        .from('work_creators')
+        .select('user_id')
+        .eq('work_id', workId)
+        .eq('user_id', user.id)
+        .maybeSingle()
+      isCreator = !!coOwner
+    }
     const canAssign =
       membership.role === 'master' ||
       membership.role === 'manager' ||
-      (!isCrossClient && work.creator_id === user.id)
+      (!isCrossClient && isCreator)
     if (!canAssign) {
       return NextResponse.json(
         { error: 'Cannot assign to this client' },

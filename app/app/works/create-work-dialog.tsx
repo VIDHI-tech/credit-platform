@@ -105,7 +105,10 @@ function WorkForm({
 
   // Step 2: basic info
   const [members, setMembers] = useState<Member[]>([])
-  const [creatorId, setCreatorId] = useState('')
+  // Multi-creator: a work can be co-owned by multiple members. The first
+  // entry in this set becomes the "primary" creator_id on the works row;
+  // every entry (including that one) gets a row in work_creators.
+  const [creatorIds, setCreatorIds] = useState<string[]>([])
   const [videoTypes, setVideoTypes] = useState<VideoType[]>([])
   const [videoType, setVideoType] = useState('')
   const [addingType, setAddingType] = useState(false)
@@ -188,8 +191,8 @@ function WorkForm({
   }
 
   async function handleSubmit() {
-    if (!creatorId) {
-      setError('Creator is required')
+    if (creatorIds.length === 0) {
+      setError('Pick at least one creator')
       setStep(2)
       return
     }
@@ -227,11 +230,16 @@ function WorkForm({
         if (uploadError) throw new Error(`Upload failed: ${uploadError.message}`)
       }
 
+      // creator_id stays as the "primary" creator — the head of the
+      // creators list. Every picked creator (including this one) also lands
+      // in work_creators so co-ownership is the source of truth.
+      const primaryCreatorId = creatorIds[0]
+
       const { error: insertError } = await supabase.from('works').insert({
         id: workId,
         org_id: membership.org_id,
         client_id: clientId,
-        creator_id: creatorId,
+        creator_id: primaryCreatorId,
         title: title.trim() || null,
         video_type: videoType || null,
         max_credits: maxCredits ? parseFloat(maxCredits) : null,
@@ -250,6 +258,22 @@ function WorkForm({
         throw new Error(
           `${insertError.message}${insertError.hint ? ` — ${insertError.hint}` : ''}`
         )
+      }
+
+      // Co-owners (skip duplicates of the primary).
+      const creatorRows = creatorIds.map((uid) => ({
+        work_id: workId,
+        user_id: uid,
+        added_by: user.id,
+      }))
+      const { error: wcErr } = await supabase
+        .from('work_creators')
+        .insert(creatorRows)
+      if (wcErr) {
+        console.error('[create-work] work_creators insert failed:', wcErr)
+        // Don't roll back the work — the primary creator_id row is
+        // preserved on works, and the master can re-add co-owners via
+        // the edit dialog.
       }
 
       onOpenChange(false)
@@ -400,32 +424,81 @@ function WorkForm({
             />
           </div>
           <div>
-            <Label className="text-neutral-300">Creator *</Label>
-            <Select
-              value={creatorId}
-              onValueChange={(v) => setCreatorId(v as string)}
-            >
-              <SelectTrigger className="mt-1 bg-neutral-900 border-neutral-700">
-                <SelectValue>
-                  {(v) => {
-                    const val = v as string | null
-                    if (!val) return 'Pick a team member'
-                    const m = members.find((x) => x.user_id === val)
-                    return m ? m.full_name : val
-                  }}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {members.map((m) => (
-                  <SelectItem key={m.user_id} value={m.user_id}>
-                    {m.full_name}{' '}
-                    <span className="text-neutral-500 text-xs capitalize">
-                      · {m.role}
-                    </span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <Label className="text-neutral-300 flex items-center justify-between">
+              <span>Creators *</span>
+              <span className="text-[10px] text-neutral-500 uppercase tracking-wider">
+                {creatorIds.length} of {members.length} picked
+              </span>
+            </Label>
+            <p className="text-[11px] text-neutral-500 mt-1 mb-2">
+              Pick one or more — they&apos;ll all be able to submit this work
+              for review. The first picked is the primary contact.
+            </p>
+            <div className="space-y-1.5 max-h-48 overflow-y-auto rounded-md border border-neutral-800 bg-neutral-900/40 p-1.5">
+              {members.length === 0 ? (
+                <p className="text-xs text-neutral-500 px-2 py-3 text-center">
+                  No active members yet.
+                </p>
+              ) : (
+                members.map((m) => {
+                  const checked = creatorIds.includes(m.user_id)
+                  const isPrimary = creatorIds[0] === m.user_id
+                  return (
+                    <button
+                      key={m.user_id}
+                      type="button"
+                      onClick={() => {
+                        setCreatorIds((prev) =>
+                          prev.includes(m.user_id)
+                            ? prev.filter((id) => id !== m.user_id)
+                            : [...prev, m.user_id],
+                        )
+                      }}
+                      className={`w-full flex items-center justify-between gap-3 px-3 py-2 rounded-md border transition-colors text-left ${
+                        checked
+                          ? 'border-lime-800 bg-lime-950/30'
+                          : 'border-neutral-800 bg-neutral-900/30 hover:border-neutral-700'
+                      }`}
+                    >
+                      <div className="min-w-0">
+                        <div className="text-sm text-white truncate flex items-center gap-2">
+                          {m.full_name}
+                          {isPrimary && (
+                            <span className="text-[10px] text-lime-400 uppercase tracking-wider">
+                              primary
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-neutral-500 capitalize">
+                          {m.role}
+                        </div>
+                      </div>
+                      <div
+                        className={`size-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-colors ${
+                          checked
+                            ? 'border-lime-400 bg-lime-400'
+                            : 'border-neutral-600 bg-transparent'
+                        }`}
+                      >
+                        {checked && (
+                          <svg
+                            viewBox="0 0 20 20"
+                            fill="currentColor"
+                            className="size-3 text-black"
+                          >
+                            <path
+                              fillRule="evenodd"
+                              d="M16.704 5.295a1 1 0 0 1 .001 1.414l-7.071 7.092a1 1 0 0 1-1.415 0L4.293 10.875a1 1 0 0 1 1.414-1.414l3.225 3.232 6.36-6.398a1 1 0 0 1 1.412 0Z"
+                              clipRule="evenodd"
+                            />
+                          </svg>
+                        )}
+                      </div>
+                    </button>
+                  )
+                })
+              )}
+            </div>
           </div>
           <div>
             <Label className="text-neutral-300">Video Type (optional)</Label>
@@ -570,8 +643,8 @@ function WorkForm({
         {step < 3 ? (
           <Button
             onClick={() => {
-              if (step === 2 && !creatorId) {
-                setError('Creator is required')
+              if (step === 2 && creatorIds.length === 0) {
+                setError('Pick at least one creator')
                 return
               }
               setError(null)

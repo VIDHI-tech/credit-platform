@@ -43,19 +43,40 @@ export default async function WorkDetailPage({ params }: PageProps) {
 
   if (!work) notFound();
 
-  // Fetch client and creator in parallel
-  const [{ data: client }, { data: creator }] = await Promise.all([
+  // Fetch client + full creator list (work_creators join) in parallel.
+  const [{ data: client }, { data: workCreators }] = await Promise.all([
     supabase
       .from("clients")
       .select("id, name, status")
       .eq("id", work.client_id)
       .maybeSingle(),
     supabase
-      .from("memberships")
-      .select("full_name")
-      .eq("user_id", work.creator_id)
-      .maybeSingle(),
+      .from("work_creators")
+      .select("user_id, added_at")
+      .eq("work_id", work.id)
+      .order("added_at", { ascending: true }),
   ]);
+
+  // Build the ordered creator list: primary (works.creator_id) first, then
+  // any additional ones from work_creators. Defensive fallback to the
+  // primary alone if the join table is empty (pre-migration data).
+  const additionalCreatorIds = (workCreators || [])
+    .map((r) => r.user_id as string)
+    .filter((uid) => uid !== work.creator_id);
+  const creatorIdList = [work.creator_id, ...additionalCreatorIds];
+
+  const { data: creatorMemberships } = await supabase
+    .from("memberships")
+    .select("user_id, full_name")
+    .in("user_id", creatorIdList);
+  const creatorNameMap = new Map(
+    (creatorMemberships || []).map((m) => [m.user_id, m.full_name]),
+  );
+  const creatorRoster = creatorIdList.map((uid) => ({
+    user_id: uid,
+    name: creatorNameMap.get(uid) || "Unknown",
+    isPrimary: uid === work.creator_id,
+  }));
 
   // Only fetch generations that belong to THIS work's client — the
   // assigned + wastage tables below the progress bar. (Unassigned ones live
@@ -102,7 +123,7 @@ export default async function WorkDetailPage({ params }: PageProps) {
         .select("user_id, full_name")
         .in("user_id", referencedAssignerIds)
     : { data: [] as { user_id: string; full_name: string }[] };
-  const creatorNameMap: Record<string, string> = Object.fromEntries(
+  const assignerNameMap: Record<string, string> = Object.fromEntries(
     (assignerMemberships || []).map((m) => [m.user_id, m.full_name]),
   );
 
@@ -121,7 +142,7 @@ export default async function WorkDetailPage({ params }: PageProps) {
     const credits = parseFloat(g.credits || "0");
     if (!perCreatorStats[g.assigned_by]) {
       perCreatorStats[g.assigned_by] = {
-        name: creatorNameMap[g.assigned_by] || "Unknown",
+        name: assignerNameMap[g.assigned_by] || "Unknown",
         actual: 0,
         wastage: 0,
         rework: 0,
@@ -147,7 +168,9 @@ export default async function WorkDetailPage({ params }: PageProps) {
     .reduce((s, g) => s + parseFloat(g.credits || "0"), 0);
 
   const status = work.status as WorkStatus;
-  const isOwnWork = work.creator_id === membership.user_id;
+  // Multi-creator: "own work" is true if the current user is ANY of the
+  // assigned creators (the primary OR a co-owner from work_creators).
+  const isOwnWork = creatorIdList.includes(membership.user_id);
   const transitions = allowedTransitions(status, membership.role, isOwnWork);
   const maxCredits = work.max_credits ? parseFloat(work.max_credits) : null;
 
@@ -213,7 +236,16 @@ export default async function WorkDetailPage({ params }: PageProps) {
               {client?.name}
             </Link>
             {" · "}
-            Creator: {creator?.full_name || "Unknown"}
+            {creatorRoster.length === 1
+              ? `Creator: ${creatorRoster[0].name}`
+              : `Creators: ${creatorRoster
+                  .slice(0, 3)
+                  .map((c) => c.name)
+                  .join(", ")}${
+                  creatorRoster.length > 3
+                    ? ` +${creatorRoster.length - 3} more`
+                    : ""
+                }`}
             {work.end_date &&
               ` · Due ${formatDeadline(work.end_date, work.end_time)}`}
           </p>

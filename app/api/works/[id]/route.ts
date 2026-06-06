@@ -42,7 +42,8 @@ export async function PATCH(
       return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 })
     }
 
-    // Only allow specific fields to be updated
+    // Only allow specific fields to be updated. `creator_ids` is handled
+    // separately below since it needs to sync the work_creators join table.
     const allowedFields = [
       'title', 'creator_id', 'video_type', 'max_credits',
       'start_date', 'end_date', 'start_time', 'end_time', 'notes',
@@ -52,17 +53,57 @@ export async function PATCH(
       if (key in body) update[key] = body[key]
     }
 
-    if (Object.keys(update).length === 0) {
+    const incomingCreatorIds: string[] | undefined = Array.isArray(
+      body.creator_ids,
+    )
+      ? body.creator_ids.filter((v: unknown) => typeof v === 'string')
+      : undefined
+
+    if (Object.keys(update).length === 0 && !incomingCreatorIds) {
       return NextResponse.json({ error: 'No fields to update' }, { status: 400 })
     }
 
-    const { error } = await supabase
-      .from('works')
-      .update(update)
-      .eq('id', id)
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 })
+    if (Object.keys(update).length > 0) {
+      const { error } = await supabase
+        .from('works')
+        .update(update)
+        .eq('id', id)
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 })
+      }
     }
+
+    // Sync work_creators: full replace. Clients pass the complete list
+    // (primary first); we wipe and re-insert. The composite PK on
+    // (work_id, user_id) plus ON CONFLICT DO NOTHING protects against
+    // duplicates.
+    if (incomingCreatorIds) {
+      if (incomingCreatorIds.length === 0) {
+        return NextResponse.json(
+          { error: 'creator_ids must include at least one user' },
+          { status: 400 },
+        )
+      }
+      const { error: delErr } = await supabase
+        .from('work_creators')
+        .delete()
+        .eq('work_id', id)
+      if (delErr) {
+        return NextResponse.json({ error: delErr.message }, { status: 500 })
+      }
+      const rows = incomingCreatorIds.map((uid) => ({
+        work_id: id,
+        user_id: uid,
+        added_by: user.id,
+      }))
+      const { error: insErr } = await supabase
+        .from('work_creators')
+        .insert(rows)
+      if (insErr) {
+        return NextResponse.json({ error: insErr.message }, { status: 500 })
+      }
+    }
+
     return NextResponse.json({ success: true })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Update failed'

@@ -65,7 +65,10 @@ export function EditWorkDialog({ open, onOpenChange, work }: Props) {
   const [error, setError] = useState<string | null>(null)
 
   const [title, setTitle] = useState(work.title || '')
-  const [creatorId, setCreatorId] = useState(work.creator_id)
+  // Multi-creator: first entry = primary (becomes works.creator_id).
+  // Initialized from the work's primary; full list loaded from work_creators
+  // when the dialog opens.
+  const [creatorIds, setCreatorIds] = useState<string[]>([work.creator_id])
   const [videoType, setVideoType] = useState(work.video_type || '')
   const [addingVideoType, setAddingVideoType] = useState(false)
   const [newVideoTypeName, setNewVideoTypeName] = useState('')
@@ -87,23 +90,37 @@ export function EditWorkDialog({ open, onOpenChange, work }: Props) {
     let cancelled = false
     async function load() {
       const supabase = createClient()
-      const [{ data: m }, { data: vt }] = await Promise.all([
+      const [{ data: m }, { data: vt }, { data: wc }] = await Promise.all([
         supabase
           .from('memberships')
           .select('user_id, full_name, role')
           .eq('status', 'active'),
         supabase.from('video_types').select('id, name').order('name'),
+        supabase
+          .from('work_creators')
+          .select('user_id, added_at')
+          .eq('work_id', work.id)
+          .order('added_at', { ascending: true }),
       ])
-      if (!cancelled) {
-        setMembers(m || [])
-        setVideoTypes(vt || [])
-      }
+      if (cancelled) return
+      setMembers(m || [])
+      setVideoTypes(vt || [])
+      // Hydrate creatorIds from work_creators; ensure the primary
+      // creator_id is the first entry so the UI shows the "primary" pill on
+      // the right person.
+      const fromJoin = (wc || []).map((row) => row.user_id as string)
+      const primary = work.creator_id
+      const ordered =
+        fromJoin.length > 0
+          ? [primary, ...fromJoin.filter((id) => id !== primary)]
+          : [primary]
+      setCreatorIds(ordered)
     }
     load()
     return () => {
       cancelled = true
     }
-  }, [open])
+  }, [open, work.id, work.creator_id])
 
   async function handleAddVideoType() {
     if (!newVideoTypeName.trim() || savingVideoType) return
@@ -152,6 +169,10 @@ export function EditWorkDialog({ open, onOpenChange, work }: Props) {
   }
 
   async function handleSave() {
+    if (creatorIds.length === 0) {
+      setError('Pick at least one creator')
+      return
+    }
     setSubmitting(true)
     setError(null)
     try {
@@ -160,7 +181,11 @@ export function EditWorkDialog({ open, onOpenChange, work }: Props) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           title: title.trim() || null,
-          creator_id: creatorId,
+          // creator_ids is the new multi-field. The API also accepts the
+          // legacy creator_id for compat — we send the first picked as
+          // primary so existing fast paths keep working.
+          creator_id: creatorIds[0],
+          creator_ids: creatorIds,
           video_type: videoType || null,
           max_credits: maxCredits ? parseFloat(maxCredits) : null,
           start_date: startDate || null,
@@ -206,27 +231,81 @@ export function EditWorkDialog({ open, onOpenChange, work }: Props) {
           </div>
 
           <div>
-            <Label className="text-neutral-300">Creator</Label>
-            <Select value={creatorId} onValueChange={(v) => setCreatorId(v as string)}>
-              <SelectTrigger className="mt-1 bg-neutral-900 border-neutral-700">
-                <SelectValue>
-                  {(v) => {
-                    const val = v as string | null
-                    if (!val) return 'Pick a team member'
-                    const m = members.find((x) => x.user_id === val)
-                    return m ? m.full_name : val
-                  }}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {members.map((m) => (
-                  <SelectItem key={m.user_id} value={m.user_id}>
-                    {m.full_name}{' '}
-                    <span className="text-neutral-500 text-xs capitalize">· {m.role}</span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <Label className="text-neutral-300 flex items-center justify-between">
+              <span>Creators</span>
+              <span className="text-[10px] text-neutral-500 uppercase tracking-wider">
+                {creatorIds.length} of {members.length} picked
+              </span>
+            </Label>
+            <p className="text-[11px] text-neutral-500 mt-1 mb-2">
+              Anyone in this list can submit the work for review.
+              First picked is the primary contact.
+            </p>
+            <div className="space-y-1.5 max-h-48 overflow-y-auto rounded-md border border-neutral-800 bg-neutral-900/40 p-1.5">
+              {members.length === 0 ? (
+                <p className="text-xs text-neutral-500 px-2 py-3 text-center">
+                  Loading members…
+                </p>
+              ) : (
+                members.map((m) => {
+                  const checked = creatorIds.includes(m.user_id)
+                  const isPrimary = creatorIds[0] === m.user_id
+                  return (
+                    <button
+                      key={m.user_id}
+                      type="button"
+                      onClick={() => {
+                        setCreatorIds((prev) =>
+                          prev.includes(m.user_id)
+                            ? prev.filter((id) => id !== m.user_id)
+                            : [...prev, m.user_id],
+                        )
+                      }}
+                      className={`w-full flex items-center justify-between gap-3 px-3 py-2 rounded-md border transition-colors text-left ${
+                        checked
+                          ? 'border-lime-800 bg-lime-950/30'
+                          : 'border-neutral-800 bg-neutral-900/30 hover:border-neutral-700'
+                      }`}
+                    >
+                      <div className="min-w-0">
+                        <div className="text-sm text-white truncate flex items-center gap-2">
+                          {m.full_name}
+                          {isPrimary && (
+                            <span className="text-[10px] text-lime-400 uppercase tracking-wider">
+                              primary
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-neutral-500 capitalize">
+                          {m.role}
+                        </div>
+                      </div>
+                      <div
+                        className={`size-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-colors ${
+                          checked
+                            ? 'border-lime-400 bg-lime-400'
+                            : 'border-neutral-600 bg-transparent'
+                        }`}
+                      >
+                        {checked && (
+                          <svg
+                            viewBox="0 0 20 20"
+                            fill="currentColor"
+                            className="size-3 text-black"
+                          >
+                            <path
+                              fillRule="evenodd"
+                              d="M16.704 5.295a1 1 0 0 1 .001 1.414l-7.071 7.092a1 1 0 0 1-1.415 0L4.293 10.875a1 1 0 0 1 1.414-1.414l3.225 3.232 6.36-6.398a1 1 0 0 1 1.412 0Z"
+                              clipRule="evenodd"
+                            />
+                          </svg>
+                        )}
+                      </div>
+                    </button>
+                  )
+                })
+              )}
+            </div>
           </div>
 
           <div>

@@ -45,24 +45,40 @@ export default async function WorksPage({ searchParams }: PageProps) {
       : works || [];
 
   const clientIds = [...new Set(visible.map((w) => w.client_id))];
-  const creatorIds = [...new Set(visible.map((w) => w.creator_id))];
   const workIds = visible.map((w) => w.id);
 
-  const [{ data: clients }, { data: creators }, { data: workCredits }] =
-    await Promise.all([
-      supabase
-        .from("clients")
-        .select("id, name")
-        .in("id", clientIds.length ? clientIds : [PLACEHOLDER]),
-      supabase
-        .from("memberships")
-        .select("user_id, full_name")
-        .in("user_id", creatorIds.length ? creatorIds : [PLACEHOLDER]),
-      supabase
-        .from("generations")
-        .select("work_id, credits")
-        .in("work_id", workIds.length ? workIds : [PLACEHOLDER]),
-    ]);
+  // Pre-fetch work_creators for all visible works so the cards can show
+  // every co-owner without N+1.
+  const [
+    { data: clients },
+    { data: workCredits },
+    { data: workCreators },
+  ] = await Promise.all([
+    supabase
+      .from("clients")
+      .select("id, name")
+      .in("id", clientIds.length ? clientIds : [PLACEHOLDER]),
+    supabase
+      .from("generations")
+      .select("work_id, credits")
+      .in("work_id", workIds.length ? workIds : [PLACEHOLDER]),
+    supabase
+      .from("work_creators")
+      .select("work_id, user_id, added_at")
+      .in("work_id", workIds.length ? workIds : [PLACEHOLDER])
+      .order("added_at", { ascending: true }),
+  ]);
+
+  // Union of every user_id we'll need to render: primary creator on the
+  // work row + every co-owner from work_creators.
+  const creatorIdSet = new Set<string>();
+  visible.forEach((w) => creatorIdSet.add(w.creator_id));
+  (workCreators || []).forEach((wc) => creatorIdSet.add(wc.user_id));
+  const creatorIds = Array.from(creatorIdSet);
+  const { data: creators } = await supabase
+    .from("memberships")
+    .select("user_id, full_name")
+    .in("user_id", creatorIds.length ? creatorIds : [PLACEHOLDER]);
 
   const clientNameMap: Record<string, string> = {};
   (clients || []).forEach((c) => {
@@ -78,6 +94,20 @@ export default async function WorksPage({ searchParams }: PageProps) {
       creditByWork[row.work_id] =
         (creditByWork[row.work_id] || 0) + parseFloat(row.credits || "0");
     }
+  });
+
+  // Build ordered creator list per work: primary first, then co-owners.
+  const additionalByWork = new Map<string, string[]>();
+  (workCreators || []).forEach((wc) => {
+    const arr = additionalByWork.get(wc.work_id) || [];
+    arr.push(wc.user_id);
+    additionalByWork.set(wc.work_id, arr);
+  });
+  const creatorIdsByWork: Record<string, string[]> = {};
+  visible.forEach((w) => {
+    const fromJoin = additionalByWork.get(w.id) || [];
+    const others = fromJoin.filter((id) => id !== w.creator_id);
+    creatorIdsByWork[w.id] = [w.creator_id, ...others];
   });
 
   return (
@@ -134,6 +164,7 @@ export default async function WorksPage({ searchParams }: PageProps) {
           works={visible}
           clientNameMap={clientNameMap}
           creatorNameMap={creatorNameMap}
+          creatorIdsByWork={creatorIdsByWork}
           creditByWork={creditByWork}
         />
       )}
