@@ -10,6 +10,7 @@ interface WorkItem {
   title: string
   clientName: string
   status: WorkStatus
+  startDate: string | null // YYYY-MM-DD
   endDate: string | null // YYYY-MM-DD
 }
 
@@ -64,16 +65,31 @@ export function CalendarView({ works }: Props) {
   const firstDay = getFirstDayOfWeek(year, month)
 
   // Build a map: "YYYY-MM-DD" → works[]
+  // Works span from startDate to endDate (inclusive)
   const worksByDate = new Map<string, WorkItem[]>()
   const noDeadline: WorkItem[] = []
+
   works.forEach((w) => {
     if (!w.endDate) {
       noDeadline.push(w)
       return
     }
-    const existing = worksByDate.get(w.endDate) || []
-    existing.push(w)
-    worksByDate.set(w.endDate, existing)
+
+    // Get date range: if no startDate, use endDate
+    const start = w.startDate ? new Date(w.startDate) : new Date(w.endDate)
+    const end = new Date(w.endDate)
+
+    // Add work to all dates in range
+    const current = new Date(start)
+    while (current <= end) {
+      const dateStr = `${current.getFullYear()}-${String(current.getMonth() + 1).padStart(2, '0')}-${String(current.getDate()).padStart(2, '0')}`
+      const existing = worksByDate.get(dateStr) || []
+      if (!existing.includes(w)) {
+        existing.push(w)
+        worksByDate.set(dateStr, existing)
+      }
+      current.setDate(current.getDate() + 1)
+    }
   })
 
   const cells: (number | null)[] = []

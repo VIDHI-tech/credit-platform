@@ -102,3 +102,40 @@ export function formatDeadline(
       : "")
   );
 }
+
+/**
+ * Format start and end dates into a readable range string.
+ */
+export function formatDateRange(
+  start_date: string | null,
+  end_date: string | null,
+): string | null {
+  if (!start_date && !end_date) return null;
+
+  const formatDate = (dateStr: string) => {
+    const date = new Date(dateStr);
+    return date.toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+    });
+  };
+
+  if (start_date && end_date) {
+    const startYear = start_date.split("-")[0];
+    const endYear = end_date.split("-")[0];
+    if (startYear === endYear) {
+      // Same year: "Jun 7 - 27"
+      const start = formatDate(start_date);
+      const endDate = new Date(end_date);
+      const end = endDate.toLocaleDateString("en-US", { day: "numeric" });
+      return `${start} - ${end}`;
+    } else {
+      // Different years: "Dec 28 - Jan 5, 2025"
+      return `${formatDate(start_date)} - ${formatDate(end_date)}`;
+    }
+  }
+
+  if (start_date) return `from ${formatDate(start_date)}`;
+  if (end_date) return `until ${formatDate(end_date)}`;
+  return null;
+}

@@ -23,7 +23,7 @@ export default async function WorksPage({ searchParams }: PageProps) {
   const { data: works } = await supabase
     .from("works")
     .select(
-      "id, title, video_type, status, end_date, end_time, max_credits, creator_id, client_id",
+      "id, title, video_type, status, start_date, end_date, end_time, max_credits, creator_id, client_id",
     )
     .order("created_at", { ascending: false });
 

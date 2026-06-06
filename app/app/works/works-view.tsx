@@ -9,6 +9,7 @@ import {
   WORK_STATUS_LABELS,
   type WorkStatus,
   formatDeadline,
+  formatDateRange,
 } from '@/lib/work-helpers'
 
 type ViewMode = 'calendar' | 'cards'
@@ -18,6 +19,7 @@ interface WorkData {
   title: string | null
   video_type: string | null
   status: string
+  start_date: string | null
   end_date: string | null
   end_time: string | null
   max_credits: number | null
@@ -63,6 +65,7 @@ export function WorksView({
             title: w.title || w.video_type || 'Untitled',
             clientName: clientNameMap[w.client_id] || 'Unknown',
             status: w.status as WorkStatus,
+            startDate: w.start_date,
             endDate: w.end_date,
           }))}
         />
@@ -102,7 +105,7 @@ export function WorksView({
                     </div>
                     <div className="flex items-end justify-between pt-3 border-t border-neutral-800">
                       <div className="text-xs text-neutral-500">
-                        {formatDeadline(w.end_date, w.end_time) || 'No deadline'}
+                        {formatDateRange(w.start_date, w.end_date) || 'No deadline'}
                       </div>
                       <div className="text-right">
                         <div className="text-base font-bold text-white">
