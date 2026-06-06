@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { ChevronLeft, ChevronRight, X } from 'lucide-react'
 import { WORK_STATUS_COLORS, type WorkStatus } from '@/lib/work-helpers'
 
 interface WorkItem {
@@ -37,6 +37,7 @@ export function CalendarView({ works }: Props) {
   const now = new Date()
   const [year, setYear] = useState(now.getFullYear())
   const [month, setMonth] = useState(now.getMonth())
+  const [selectedDate, setSelectedDate] = useState<string | null>(null)
 
   function prevMonth() {
     if (month === 0) {
@@ -176,9 +177,13 @@ export function CalendarView({ works }: Props) {
                   </Link>
                 ))}
                 {dayWorks.length > 3 && (
-                  <div className="text-[10px] text-neutral-500 px-1">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedDate(dateStr)}
+                    className="text-[10px] text-lime-400 hover:text-lime-300 px-1 cursor-pointer transition-colors"
+                  >
                     +{dayWorks.length - 3} more
-                  </div>
+                  </button>
                 )}
               </div>
             </div>
@@ -202,6 +207,61 @@ export function CalendarView({ works }: Props) {
                 {w.title || 'Untitled'} · {w.clientName}
               </Link>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: ALL WORKS FOR SELECTED DATE */}
+      {selectedDate && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-neutral-950 border border-neutral-800 rounded-lg max-w-2xl w-full max-h-[80vh] overflow-y-auto">
+            <div className="flex items-center justify-between sticky top-0 bg-neutral-950 border-b border-neutral-800 px-4 py-3">
+              <div>
+                <h2 className="text-lg font-semibold text-white">
+                  Works on {new Date(selectedDate + 'T00:00:00').toLocaleDateString('en-US', {
+                    month: 'short',
+                    day: 'numeric',
+                    year: 'numeric',
+                  })}
+                </h2>
+                <p className="text-xs text-neutral-500 mt-0.5">
+                  {(worksByDate.get(selectedDate) || []).length} work
+                  {(worksByDate.get(selectedDate) || []).length === 1 ? '' : 's'}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedDate(null)}
+                className="p-1 hover:bg-neutral-800 rounded transition-colors"
+              >
+                <X className="size-5 text-neutral-400 hover:text-white" />
+              </button>
+            </div>
+            <div className="divide-y divide-neutral-800 p-3 space-y-1">
+              {(worksByDate.get(selectedDate) || []).map((w) => (
+                <Link
+                  key={w.id}
+                  href={`/app/works/${w.id}`}
+                  className="block p-3 hover:bg-neutral-900/50 rounded transition-colors group"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium text-white group-hover:text-lime-400 transition-colors truncate">
+                        {w.title || 'Untitled'}
+                      </div>
+                      <div className="text-sm text-neutral-400 mt-1">
+                        {w.clientName}
+                      </div>
+                    </div>
+                    <span
+                      className={`text-xs px-2 py-1 rounded border shrink-0 ${WORK_STATUS_COLORS[w.status]}`}
+                    >
+                      {w.status.replace(/_/g, ' ')}
+                    </span>
+                  </div>
+                </Link>
+              ))}
+            </div>
           </div>
         </div>
       )}
