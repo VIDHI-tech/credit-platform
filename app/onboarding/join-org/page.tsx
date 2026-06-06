@@ -1,11 +1,17 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+// app/onboarding/join-org/page.tsx
+// Privacy-friendly join flow: no organization is shown until the user types
+// at least 2 chars. A debounced ilike search returns matching orgs to pick
+// from. This avoids leaking the full org directory to anyone who lands here.
+
+import { useState, useEffect, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase-browser'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Search, Check } from 'lucide-react'
 
 interface Org {
   id: string
@@ -14,61 +20,95 @@ interface Org {
 
 export default function JoinOrgPage() {
   const router = useRouter()
-  const [orgs, setOrgs] = useState<Org[]>([])
-  const [selectedOrgId, setSelectedOrgId] = useState<string | null>(null)
+  const [supabase] = useState(() => createClient())
+
+  const [query, setQuery] = useState('')
+  const [results, setResults] = useState<Org[]>([])
+  const [searching, setSearching] = useState(false)
+  const [searched, setSearched] = useState(false)
+
+  const [selected, setSelected] = useState<Org | null>(null)
   const [fullName, setFullName] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [isPending, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
 
+  // Debounced search — only fires when the user has typed at least 2 chars.
+  // Stale error message is cleared the moment the user starts typing again.
   useEffect(() => {
-    async function load() {
-      const supabase = createClient()
+    setError(null)
+    const trimmed = query.trim()
+    if (trimmed.length < 2) {
+      setResults([])
+      setSearched(false)
+      return
+    }
+    setSearching(true)
+    const handle = setTimeout(async () => {
       const { data } = await supabase
         .from('organizations')
         .select('id, name')
+        .ilike('name', `%${trimmed}%`)
         .order('name')
-      setOrgs(data || [])
+        .limit(20)
+      setResults(data || [])
+      setSearching(false)
+      setSearched(true)
+    }, 250)
+    return () => clearTimeout(handle)
+  }, [query, supabase])
+
+  // If the currently-selected org no longer matches the new query, drop it
+  // so the user re-picks deliberately.
+  useEffect(() => {
+    if (selected && !results.some((o) => o.id === selected.id)) {
+      setSelected(null)
     }
-    load()
-  }, [])
+  }, [results, selected])
 
   async function handleJoin() {
-    if (!selectedOrgId || !fullName.trim()) {
-      setError('Pick an org and enter your name')
+    if (!selected || !fullName.trim()) {
+      setError('Pick an organization and enter your name')
       return
     }
     setSubmitting(true)
     setError(null)
     try {
-      const supabase = createClient()
-      const { data: membershipId, error } = await supabase.rpc('request_join_org', {
-        target_org_id: selectedOrgId,
-        user_full_name: fullName.trim(),
-      })
-      if (error) throw error
+      const { data: membershipId, error: rpcErr } = await supabase.rpc(
+        'request_join_org',
+        {
+          target_org_id: selected.id,
+          user_full_name: fullName.trim(),
+        },
+      )
+      if (rpcErr) throw rpcErr
 
-      // Check if auto-approved (invitation existed)
+      // Check if auto-approved (invitation existed) and route accordingly.
       const { data: membership } = await supabase
         .from('memberships')
         .select('status')
         .eq('id', membershipId)
         .maybeSingle()
 
-      if (membership?.status === 'active') {
-        router.push('/app/dashboard')
-      } else {
-        router.push('/onboarding/pending')
-      }
+      startTransition(() => {
+        if (membership?.status === 'active') {
+          router.push('/app/dashboard')
+        } else {
+          router.push('/onboarding/pending')
+        }
+      })
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Something went wrong'
       setError(
         message.includes('unique')
           ? 'You already requested to join this org'
-          : message
+          : message,
       )
       setSubmitting(false)
     }
   }
+
+  const disabled = submitting || isPending
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-black p-4">
@@ -76,32 +116,73 @@ export default function JoinOrgPage() {
         <div>
           <h1 className="text-2xl font-bold text-white">Join Organization</h1>
           <p className="text-neutral-400 text-sm mt-1">
-            Pick yours, the admin will approve.
+            Search for your organization by name. The admin will approve your
+            request unless you&apos;ve already been invited.
           </p>
         </div>
 
         <div className="space-y-4">
           <div>
-            <Label className="text-neutral-300">Organization</Label>
-            <div className="mt-1 space-y-2 max-h-60 overflow-y-auto">
-              {orgs.length === 0 ? (
-                <p className="text-neutral-500 text-sm">
-                  No organizations exist yet. Ask your admin to create one first.
+            <Label htmlFor="orgSearch" className="text-neutral-300">
+              Search organization
+            </Label>
+            <div className="relative mt-1">
+              <Search className="size-4 text-neutral-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <Input
+                id="orgSearch"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Type at least 2 characters…"
+                className="pl-9 bg-neutral-900 border-neutral-700 text-white"
+                disabled={disabled}
+                autoFocus
+              />
+            </div>
+
+            {/* Results */}
+            <div className="mt-2 space-y-2 max-h-60 overflow-y-auto">
+              {query.trim().length < 2 ? (
+                <p className="text-xs text-neutral-500 px-1">
+                  Search hides the full directory — only orgs matching your
+                  query will appear.
+                </p>
+              ) : searching ? (
+                <p className="text-xs text-neutral-500 px-1">Searching…</p>
+              ) : searched && results.length === 0 ? (
+                <p className="text-xs text-neutral-500 px-1">
+                  No organization matches &ldquo;{query.trim()}&rdquo;. Ask your
+                  admin to confirm the exact name, or{' '}
+                  <button
+                    type="button"
+                    onClick={() => router.push('/onboarding/create-org')}
+                    className="text-lime-400 hover:underline"
+                  >
+                    create a new one
+                  </button>
+                  .
                 </p>
               ) : (
-                orgs.map((org) => (
-                  <button
-                    key={org.id}
-                    onClick={() => setSelectedOrgId(org.id)}
-                    className={`w-full text-left px-3 py-2 rounded border transition-colors ${
-                      selectedOrgId === org.id
-                        ? 'bg-lime-950/40 border-lime-500 text-white'
-                        : 'bg-neutral-900 border-neutral-700 text-neutral-300 hover:border-neutral-600'
-                    }`}
-                  >
-                    {org.name}
-                  </button>
-                ))
+                results.map((org) => {
+                  const isSelected = selected?.id === org.id
+                  return (
+                    <button
+                      key={org.id}
+                      type="button"
+                      onClick={() => setSelected(org)}
+                      disabled={disabled}
+                      className={`w-full text-left px-3 py-2 rounded border transition-colors flex items-center justify-between gap-3 ${
+                        isSelected
+                          ? 'bg-lime-950/40 border-lime-500 text-white'
+                          : 'bg-neutral-900 border-neutral-700 text-neutral-300 hover:border-neutral-600'
+                      }`}
+                    >
+                      <span className="truncate">{org.name}</span>
+                      {isSelected && (
+                        <Check className="size-4 shrink-0 text-lime-400" />
+                      )}
+                    </button>
+                  )
+                })
               )}
             </div>
           </div>
@@ -116,7 +197,7 @@ export default function JoinOrgPage() {
               onChange={(e) => setFullName(e.target.value)}
               placeholder="e.g. Vidhi"
               className="mt-1 bg-neutral-900 border-neutral-700 text-white"
-              disabled={submitting}
+              disabled={disabled}
             />
           </div>
         </div>
@@ -131,17 +212,21 @@ export default function JoinOrgPage() {
           <Button
             variant="outline"
             onClick={() => router.push('/onboarding')}
-            disabled={submitting}
+            disabled={disabled}
             className="flex-1"
           >
             Back
           </Button>
           <Button
             onClick={handleJoin}
-            disabled={submitting || !selectedOrgId}
+            disabled={disabled || !selected || !fullName.trim()}
             className="flex-1 bg-lime-400 hover:bg-lime-300 text-black font-semibold"
           >
-            {submitting ? 'Submitting…' : 'Request to Join'}
+            {submitting
+              ? 'Submitting…'
+              : isPending
+                ? 'Going…'
+                : 'Request to Join'}
           </Button>
         </div>
       </div>

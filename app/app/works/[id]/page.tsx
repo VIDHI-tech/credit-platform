@@ -19,7 +19,7 @@ import { can } from "@/lib/rbac";
 import { StatusActionButtons } from "./status-action-buttons";
 import { AssignTables } from "./assign-tables";
 import { SyncAndAssign } from "./sync-and-assign";
-import { InstructionsViewer } from "./instructions-viewer";
+import { InstructionsButton } from "./instructions-button";
 import { ScheduleCalendar } from "./schedule-calendar";
 import { WorkActions } from "./work-actions";
 
@@ -150,6 +150,28 @@ export default async function WorkDetailPage({ params }: PageProps) {
   const isOwnWork = work.creator_id === membership.user_id;
   const transitions = allowedTransitions(status, membership.role, isOwnWork);
   const maxCredits = work.max_credits ? parseFloat(work.max_credits) : null;
+
+  // Pre-fetch the instructions file content so the header button can open
+  // the modal client-side without a round-trip. Skipped if no file.
+  // If the file is recorded in the DB but the download fails (transient
+  // network/RLS issue), we still surface the file metadata so the icon
+  // doesn't silently fall back to the notes-only state — the modal will
+  // show a "couldn't load" affordance instead.
+  let instructionsFilename: string | null = null;
+  let instructionsFileExt: string | null = null;
+  let instructionsFileContent: string | null = null;
+  if (work.instructions_path) {
+    const filename =
+      work.instructions_path.split("/").pop() || "instructions.txt";
+    instructionsFilename = filename;
+    instructionsFileExt = filename.split(".").pop()?.toLowerCase() || "txt";
+    const { data: fileBlob } = await supabase.storage
+      .from("work-instructions")
+      .download(work.instructions_path);
+    if (fileBlob) {
+      instructionsFileContent = await fileBlob.text();
+    }
+  }
   const canEdit = can(
     membership.role as "master" | "manager" | "creator",
     "works",
@@ -198,6 +220,12 @@ export default async function WorkDetailPage({ params }: PageProps) {
         </div>
 
         <div className="flex items-center gap-2">
+          <InstructionsButton
+            filename={instructionsFilename}
+            fileExt={instructionsFileExt}
+            fileContent={instructionsFileContent}
+            notes={work.notes}
+          />
           {transitions.length > 0 && (
             <StatusActionButtons workId={work.id} transitions={transitions} />
           )}
@@ -313,27 +341,8 @@ export default async function WorkDetailPage({ params }: PageProps) {
         </div>
       )}
 
-      {/* INSTRUCTIONS */}
-      {(work.instructions_path || work.notes) && (
-        <section className="bg-neutral-950 border border-neutral-800 rounded-lg overflow-hidden mb-6">
-          <div className="px-4 py-3 border-b border-neutral-800">
-            <h2 className="font-semibold text-white text-sm">Instructions</h2>
-          </div>
-          {work.instructions_path && (
-            <InstructionsViewer path={work.instructions_path} />
-          )}
-          {work.notes && (
-            <div className="px-4 py-3 border-t border-neutral-800">
-              <div className="text-[10px] text-neutral-500 uppercase tracking-wider mb-2">
-                Notes
-              </div>
-              <p className="text-sm text-neutral-200 whitespace-pre-wrap font-mono">
-                {work.notes}
-              </p>
-            </div>
-          )}
-        </section>
-      )}
+      {/* Instructions are now accessible via the file-icon button in the
+          header (top-right) — no standalone section needed below. */}
 
       {/* ASSIGNED + WASTAGE — 2-column below the progress bar */}
       <AssignTables
