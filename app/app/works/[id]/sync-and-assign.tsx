@@ -302,24 +302,37 @@ export function SyncAndAssign({
     }
 
     setBatchBusy(null)
+
+    // Total bust — nothing landed. Stay on Modal B so the user can fix.
     if (failures.length > 0 && assignedIds.length === 0) {
       setBatchError(
         `All ${failures.length} failed: ${failures.slice(0, 3).join('; ')}`,
       )
       return
     }
+
+    // Partial failure — at least one row landed, but others didn't. DON'T
+    // navigate; if we did, the error message would be hidden by the modal
+    // closing + the page changing. Surface the error and let the user
+    // close manually, or retry against the failures.
     if (failures.length > 0) {
       setBatchError(
         `${failures.length} of ${ids.length} failed: ${failures.slice(0, 3).join('; ')}`,
       )
+      // Refresh the picker's unassigned list so the successfully-attributed
+      // rows fall out of it.
+      await loadUnassigned()
+      // Drop the selection so the user re-picks deliberately.
+      setSelectedIds(new Set())
+      return
     }
 
+    // Full success — close modals and route to the destination client.
     setDestOpen(false)
     setPickerOpen(false)
     setSelectedIds(new Set())
-    // Navigate the master to the destination client's page — that's where
-    // the assigned (or wasted) generations now live. Wrapped in a
-    // transition so the modal buttons stay disabled through navigation.
+    // Wrapped in a transition so the modal buttons stay disabled until the
+    // server-rendered tables on the client page actually render.
     startTransition(() => {
       router.push(`/app/clients/${targetClientId}`)
       router.refresh()
