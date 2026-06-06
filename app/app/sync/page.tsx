@@ -334,7 +334,14 @@ export default function SyncPage() {
                               placeholder={
                                 assigning === gen.id ? 'Assigning…' : 'Pick client'
                               }
-                            />
+                            >
+                              {(v) => {
+                                const val = v as string | null
+                                if (!val) return assigning === gen.id ? 'Assigning…' : 'Pick client'
+                                const found = clients.find((c) => c.id === val)
+                                return found ? found.name : val
+                              }}
+                            </SelectValue>
                           </SelectTrigger>
                           <SelectContent>
                             {clients.length === 0 ? (
