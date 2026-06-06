@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase-browser'
 import { Button } from '@/components/ui/button'
@@ -34,6 +34,11 @@ interface ClientData {
   status: ClientStatus
 }
 
+interface Industry {
+  id: string
+  name: string
+}
+
 interface Props {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -50,8 +55,7 @@ export function ClientFormDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="bg-neutral-950 border-neutral-800 text-white">
-        {/* Mount fresh each time it opens so fields populate/reset from props
-            (React's "key to reset state" pattern — no effect needed). */}
+        {/* Mount fresh each time it opens so fields populate/reset from props. */}
         {open && (
           <ClientForm
             key={`${mode}:${initialData?.id ?? 'new'}`}
@@ -85,6 +89,78 @@ function ClientForm({
   )
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Industry dropdown state
+  const [industries, setIndustries] = useState<Industry[]>([])
+  const [addingIndustry, setAddingIndustry] = useState(false)
+  const [newIndustryName, setNewIndustryName] = useState('')
+  const [savingIndustry, setSavingIndustry] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      const supabase = createClient()
+      const { data } = await supabase
+        .from('industries')
+        .select('id, name')
+        .order('name')
+      if (!cancelled) setIndustries(data || [])
+    }
+    load()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  async function handleAddIndustry() {
+    if (!newIndustryName.trim() || savingIndustry) return
+    setSavingIndustry(true)
+    try {
+      const supabase = createClient()
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      if (!user) return
+      const { data: membership } = await supabase
+        .from('memberships')
+        .select('org_id')
+        .eq('user_id', user.id)
+        .eq('status', 'active')
+        .limit(1)
+        .maybeSingle()
+      if (!membership) return
+
+      const { data, error: err } = await supabase
+        .from('industries')
+        .insert({
+          org_id: membership.org_id,
+          name: newIndustryName.trim(),
+          created_by: user.id,
+        })
+        .select('id, name')
+        .single()
+
+      if (err) {
+        setError(
+          err.message.includes('duplicate')
+            ? 'Industry already exists'
+            : err.message
+        )
+        return
+      }
+      if (data) {
+        setIndustries((prev) =>
+          [...prev, data].sort((a, b) => a.name.localeCompare(b.name))
+        )
+        setIndustry(data.name)
+        setAddingIndustry(false)
+        setNewIndustryName('')
+        setError(null)
+      }
+    } finally {
+      setSavingIndustry(false)
+    }
+  }
 
   async function handleSubmit() {
     if (!name.trim()) {
@@ -179,17 +255,70 @@ function ClientForm({
         </div>
 
         <div>
-          <Label htmlFor="industry" className="text-neutral-300">
-            Industry
-          </Label>
-          <Input
-            id="industry"
-            value={industry}
-            onChange={(e) => setIndustry(e.target.value)}
-            placeholder="e.g. Food & Beverage"
-            className="mt-1 bg-neutral-900 border-neutral-700 text-white"
-            disabled={submitting}
-          />
+          <Label className="text-neutral-300">Industry</Label>
+          {!addingIndustry ? (
+            <Select
+              value={industry}
+              onValueChange={(v) => {
+                const val = v as string
+                if (val === '__add_industry') setAddingIndustry(true)
+                else setIndustry(val)
+              }}
+              disabled={submitting}
+            >
+              <SelectTrigger className="mt-1 bg-neutral-900 border-neutral-700">
+                <SelectValue placeholder="Pick or add an industry..." />
+              </SelectTrigger>
+              <SelectContent>
+                {industries.map((ind) => (
+                  <SelectItem key={ind.id} value={ind.name}>
+                    {ind.name}
+                  </SelectItem>
+                ))}
+                <SelectItem
+                  value="__add_industry"
+                  className="text-lime-400"
+                >
+                  + Add new industry
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          ) : (
+            <div className="flex gap-2 mt-1">
+              <Input
+                value={newIndustryName}
+                onChange={(e) => setNewIndustryName(e.target.value)}
+                placeholder="e.g. Food & Beverage"
+                className="bg-neutral-900 border-neutral-700 text-white flex-1"
+                disabled={savingIndustry}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    handleAddIndustry()
+                  }
+                }}
+              />
+              <Button
+                size="sm"
+                onClick={handleAddIndustry}
+                disabled={savingIndustry || !newIndustryName.trim()}
+                className="bg-lime-400 hover:bg-lime-300 text-black font-semibold"
+              >
+                {savingIndustry ? 'Adding…' : 'Add'}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={savingIndustry}
+                onClick={() => {
+                  setAddingIndustry(false)
+                  setNewIndustryName('')
+                }}
+              >
+                Cancel
+              </Button>
+            </div>
+          )}
         </div>
 
         <div>

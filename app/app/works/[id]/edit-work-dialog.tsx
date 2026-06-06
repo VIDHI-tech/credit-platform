@@ -30,17 +30,11 @@ interface VideoType {
   id: string
   name: string
 }
-interface Industry {
-  id: string
-  name: string
-}
-
 interface WorkData {
   id: string
   title: string | null
   creator_id: string
   video_type: string | null
-  industry: string | null
   max_credits: number | null
   start_date: string | null
   end_date: string | null
@@ -75,10 +69,6 @@ export function EditWorkDialog({ open, onOpenChange, work }: Props) {
   const [addingVideoType, setAddingVideoType] = useState(false)
   const [newVideoTypeName, setNewVideoTypeName] = useState('')
   const [savingVideoType, setSavingVideoType] = useState(false)
-  const [industry, setIndustry] = useState(work.industry || '')
-  const [addingIndustry, setAddingIndustry] = useState(false)
-  const [newIndustryName, setNewIndustryName] = useState('')
-  const [savingIndustry, setSavingIndustry] = useState(false)
   const [maxCredits, setMaxCredits] = useState(
     work.max_credits !== null ? String(work.max_credits) : ''
   )
@@ -90,25 +80,22 @@ export function EditWorkDialog({ open, onOpenChange, work }: Props) {
 
   const [members, setMembers] = useState<Member[]>([])
   const [videoTypes, setVideoTypes] = useState<VideoType[]>([])
-  const [industries, setIndustries] = useState<Industry[]>([])
 
   useEffect(() => {
     if (!open) return
     let cancelled = false
     async function load() {
       const supabase = createClient()
-      const [{ data: m }, { data: vt }, { data: ind }] = await Promise.all([
+      const [{ data: m }, { data: vt }] = await Promise.all([
         supabase
           .from('memberships')
           .select('user_id, full_name, role')
           .eq('status', 'active'),
         supabase.from('video_types').select('id, name').order('name'),
-        supabase.from('industries').select('id, name').order('name'),
       ])
       if (!cancelled) {
         setMembers(m || [])
         setVideoTypes(vt || [])
-        setIndustries(ind || [])
       }
     }
     load()
@@ -163,52 +150,6 @@ export function EditWorkDialog({ open, onOpenChange, work }: Props) {
     }
   }
 
-  async function handleAddIndustry() {
-    if (!newIndustryName.trim() || savingIndustry) return
-    setSavingIndustry(true)
-    try {
-      const supabase = createClient()
-      const {
-        data: { user },
-      } = await supabase.auth.getUser()
-      if (!user) return
-      const { data: membership } = await supabase
-        .from('memberships')
-        .select('org_id')
-        .eq('user_id', user.id)
-        .eq('status', 'active')
-        .limit(1)
-        .maybeSingle()
-      if (!membership) return
-
-      const { data, error } = await supabase
-        .from('industries')
-        .insert({
-          org_id: membership.org_id,
-          name: newIndustryName.trim(),
-          created_by: user.id,
-        })
-        .select('id, name')
-        .single()
-
-      if (error) {
-        setError(error.message.includes('duplicate') ? 'Industry already exists' : error.message)
-        return
-      }
-      if (data) {
-        setIndustries((prev) =>
-          [...prev, data].sort((a, b) => a.name.localeCompare(b.name))
-        )
-        setIndustry(data.name)
-        setAddingIndustry(false)
-        setNewIndustryName('')
-        setError(null)
-      }
-    } finally {
-      setSavingIndustry(false)
-    }
-  }
-
   async function handleSave() {
     setSubmitting(true)
     setError(null)
@@ -220,7 +161,6 @@ export function EditWorkDialog({ open, onOpenChange, work }: Props) {
           title: title.trim() || null,
           creator_id: creatorId,
           video_type: videoType || null,
-          industry: industry || null,
           max_credits: maxCredits ? parseFloat(maxCredits) : null,
           start_date: startDate || null,
           end_date: endDate || null,
@@ -286,7 +226,7 @@ export function EditWorkDialog({ open, onOpenChange, work }: Props) {
             </Select>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div>
             <div>
               <Label className="text-neutral-300">Video Type</Label>
               {!addingVideoType ? (
@@ -338,64 +278,6 @@ export function EditWorkDialog({ open, onOpenChange, work }: Props) {
                     onClick={() => {
                       setAddingVideoType(false)
                       setNewVideoTypeName('')
-                    }}
-                  >
-                    Cancel
-                  </Button>
-                </div>
-              )}
-            </div>
-            <div>
-              <Label className="text-neutral-300">Industry</Label>
-              {!addingIndustry ? (
-                <Select value={industry} onValueChange={(v) => {
-                  const val = v as string
-                  if (val === '__add_industry') setAddingIndustry(true)
-                  else setIndustry(val)
-                }}>
-                  <SelectTrigger className="mt-1 bg-neutral-900 border-neutral-700">
-                    <SelectValue placeholder="Select..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {industries.map((ind) => (
-                      <SelectItem key={ind.id} value={ind.name}>
-                        {ind.name}
-                      </SelectItem>
-                    ))}
-                    <SelectItem value="__add_industry" className="text-lime-400">
-                      + Add new industry
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-              ) : (
-                <div className="flex gap-2 mt-1">
-                  <Input
-                    value={newIndustryName}
-                    onChange={(e) => setNewIndustryName(e.target.value)}
-                    placeholder="e.g. Food & Beverage"
-                    className="bg-neutral-900 border-neutral-700 text-white flex-1"
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault()
-                        handleAddIndustry()
-                      }
-                    }}
-                  />
-                  <Button
-                    size="sm"
-                    onClick={handleAddIndustry}
-                    disabled={savingIndustry || !newIndustryName.trim()}
-                    className="bg-lime-400 hover:bg-lime-300 text-black font-semibold"
-                  >
-                    {savingIndustry ? 'Adding…' : 'Add'}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={savingIndustry}
-                    onClick={() => {
-                      setAddingIndustry(false)
-                      setNewIndustryName('')
                     }}
                   >
                     Cancel

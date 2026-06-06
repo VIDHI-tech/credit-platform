@@ -30,7 +30,7 @@ export default async function WorkDetailPage({ params }: PageProps) {
   const { data: work } = await supabase
     .from("works")
     .select(
-      "id, title, video_type, industry, status, start_date, end_date, start_time, end_time, max_credits, client_id, creator_id, instructions_path, notes",
+      "id, title, video_type, status, start_date, end_date, start_time, end_time, max_credits, client_id, creator_id, instructions_path, notes",
     )
     .eq("id", id)
     .maybeSingle();
@@ -133,7 +133,6 @@ export default async function WorkDetailPage({ params }: PageProps) {
               title: work.title,
               creator_id: work.creator_id,
               video_type: work.video_type,
-              industry: (work as any).industry || null,
               max_credits: work.max_credits
                 ? parseFloat(work.max_credits)
                 : null,

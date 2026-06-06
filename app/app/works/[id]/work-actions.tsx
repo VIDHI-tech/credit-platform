@@ -11,7 +11,6 @@ interface WorkData {
   title: string | null
   creator_id: string
   video_type: string | null
-  industry: string | null
   max_credits: number | null
   start_date: string | null
   end_date: string | null

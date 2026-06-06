@@ -44,7 +44,7 @@ export async function PATCH(
 
     // Only allow specific fields to be updated
     const allowedFields = [
-      'title', 'creator_id', 'video_type', 'industry', 'max_credits',
+      'title', 'creator_id', 'video_type', 'max_credits',
       'start_date', 'end_date', 'start_time', 'end_time', 'notes',
     ]
     const update: Record<string, unknown> = {}
