@@ -74,9 +74,11 @@ export function EditWorkDialog({ open, onOpenChange, work }: Props) {
   const [videoType, setVideoType] = useState(work.video_type || '')
   const [addingVideoType, setAddingVideoType] = useState(false)
   const [newVideoTypeName, setNewVideoTypeName] = useState('')
+  const [savingVideoType, setSavingVideoType] = useState(false)
   const [industry, setIndustry] = useState(work.industry || '')
   const [addingIndustry, setAddingIndustry] = useState(false)
   const [newIndustryName, setNewIndustryName] = useState('')
+  const [savingIndustry, setSavingIndustry] = useState(false)
   const [maxCredits, setMaxCredits] = useState(
     work.max_credits !== null ? String(work.max_credits) : ''
   )
@@ -116,84 +118,94 @@ export function EditWorkDialog({ open, onOpenChange, work }: Props) {
   }, [open])
 
   async function handleAddVideoType() {
-    if (!newVideoTypeName.trim()) return
-    const supabase = createClient()
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
-    if (!user) return
-    const { data: membership } = await supabase
-      .from('memberships')
-      .select('org_id')
-      .eq('user_id', user.id)
-      .eq('status', 'active')
-      .limit(1)
-      .maybeSingle()
-    if (!membership) return
+    if (!newVideoTypeName.trim() || savingVideoType) return
+    setSavingVideoType(true)
+    try {
+      const supabase = createClient()
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      if (!user) return
+      const { data: membership } = await supabase
+        .from('memberships')
+        .select('org_id')
+        .eq('user_id', user.id)
+        .eq('status', 'active')
+        .limit(1)
+        .maybeSingle()
+      if (!membership) return
 
-    const { data, error } = await supabase
-      .from('video_types')
-      .insert({
-        org_id: membership.org_id,
-        name: newVideoTypeName.trim(),
-        created_by: user.id,
-      })
-      .select('id, name')
-      .single()
+      const { data, error } = await supabase
+        .from('video_types')
+        .insert({
+          org_id: membership.org_id,
+          name: newVideoTypeName.trim(),
+          created_by: user.id,
+        })
+        .select('id, name')
+        .single()
 
-    if (error) {
-      setError(error.message.includes('duplicate') ? 'Type already exists' : error.message)
-      return
-    }
-    if (data) {
-      setVideoTypes((prev) =>
-        [...prev, data].sort((a, b) => a.name.localeCompare(b.name))
-      )
-      setVideoType(data.name)
-      setAddingVideoType(false)
-      setNewVideoTypeName('')
-      setError(null)
+      if (error) {
+        setError(error.message.includes('duplicate') ? 'Type already exists' : error.message)
+        return
+      }
+      if (data) {
+        setVideoTypes((prev) =>
+          [...prev, data].sort((a, b) => a.name.localeCompare(b.name))
+        )
+        setVideoType(data.name)
+        setAddingVideoType(false)
+        setNewVideoTypeName('')
+        setError(null)
+      }
+    } finally {
+      setSavingVideoType(false)
     }
   }
 
   async function handleAddIndustry() {
-    if (!newIndustryName.trim()) return
-    const supabase = createClient()
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
-    if (!user) return
-    const { data: membership } = await supabase
-      .from('memberships')
-      .select('org_id')
-      .eq('user_id', user.id)
-      .eq('status', 'active')
-      .limit(1)
-      .maybeSingle()
-    if (!membership) return
+    if (!newIndustryName.trim() || savingIndustry) return
+    setSavingIndustry(true)
+    try {
+      const supabase = createClient()
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      if (!user) return
+      const { data: membership } = await supabase
+        .from('memberships')
+        .select('org_id')
+        .eq('user_id', user.id)
+        .eq('status', 'active')
+        .limit(1)
+        .maybeSingle()
+      if (!membership) return
 
-    const { data, error } = await supabase
-      .from('industries')
-      .insert({
-        org_id: membership.org_id,
-        name: newIndustryName.trim(),
-        created_by: user.id,
-      })
-      .select('id, name')
-      .single()
+      const { data, error } = await supabase
+        .from('industries')
+        .insert({
+          org_id: membership.org_id,
+          name: newIndustryName.trim(),
+          created_by: user.id,
+        })
+        .select('id, name')
+        .single()
 
-    if (error) {
-      setError(error.message.includes('duplicate') ? 'Industry already exists' : error.message)
-      return
-    }
-    if (data) {
-      setIndustries((prev) =>
-        [...prev, data].sort((a, b) => a.name.localeCompare(b.name))
-      )
-      setIndustry(data.name)
-      setAddingIndustry(false)
-      setNewIndustryName('')
-      setError(null)
+      if (error) {
+        setError(error.message.includes('duplicate') ? 'Industry already exists' : error.message)
+        return
+      }
+      if (data) {
+        setIndustries((prev) =>
+          [...prev, data].sort((a, b) => a.name.localeCompare(b.name))
+        )
+        setIndustry(data.name)
+        setAddingIndustry(false)
+        setNewIndustryName('')
+        setError(null)
+      }
+    } finally {
+      setSavingIndustry(false)
     }
   }
 
@@ -314,13 +326,15 @@ export function EditWorkDialog({ open, onOpenChange, work }: Props) {
                   <Button
                     size="sm"
                     onClick={handleAddVideoType}
+                    disabled={savingVideoType || !newVideoTypeName.trim()}
                     className="bg-lime-400 hover:bg-lime-300 text-black font-semibold"
                   >
-                    Add
+                    {savingVideoType ? 'Adding…' : 'Add'}
                   </Button>
                   <Button
                     size="sm"
                     variant="outline"
+                    disabled={savingVideoType}
                     onClick={() => {
                       setAddingVideoType(false)
                       setNewVideoTypeName('')
@@ -370,13 +384,15 @@ export function EditWorkDialog({ open, onOpenChange, work }: Props) {
                   <Button
                     size="sm"
                     onClick={handleAddIndustry}
+                    disabled={savingIndustry || !newIndustryName.trim()}
                     className="bg-lime-400 hover:bg-lime-300 text-black font-semibold"
                   >
-                    Add
+                    {savingIndustry ? 'Adding…' : 'Add'}
                   </Button>
                   <Button
                     size="sm"
                     variant="outline"
+                    disabled={savingIndustry}
                     onClick={() => {
                       setAddingIndustry(false)
                       setNewIndustryName('')
