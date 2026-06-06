@@ -2,8 +2,10 @@
 
 // app/app/works/[id]/sync-and-assign.tsx — right-hand 50% container that
 // drives a two-step modal flow:
-//   1. Click "Sync & Assign"  → POST /api/hf-sync   (button → "Syncing…")
-//      → on success, fetch unassigned generations → open MODAL A.
+//   1. Click "Sync & Assign" → open MODAL A IMMEDIATELY with shimmer
+//      rows while POST /api/hf-sync runs in the background. Once the
+//      sync resolves, loadUnassigned() repopulates the picker — or the
+//      modal shows an inline error if it failed.
 //   2. MODAL A — multi-select unassigned generations. Sticky header with
 //      "Assign" + "Cancel". "Assign" opens MODAL B.
 //   3. MODAL B — pick a client (defaulted to the current work's client) and
@@ -166,9 +168,17 @@ export function SyncAndAssign({
   }, [destOpen, supabase])
 
   async function handleSync() {
+    // Open the picker IMMEDIATELY so the user sees feedback. The modal
+    // renders shimmer rows while the sync is in flight; real rows replace
+    // the shimmer once loadUnassigned() finishes.
     setSyncing(true)
     setSyncError(null)
     setSyncMessage(null)
+    setUnassigned([]) // clear stale rows so shimmer takes over cleanly
+    setSelectedIds(new Set())
+    setAccountFilter(null)
+    setPickerOpen(true)
+
     try {
       const res = await fetch('/api/hf-sync', { method: 'POST' })
       if (res.status === 409) {
@@ -185,11 +195,8 @@ export function SyncAndAssign({
         return
       }
       setSyncMessage(data?.message || 'Sync complete.')
-      // Reload unassigned and open picker
+      // Pull the freshly-synced rows for the picker to render.
       await loadUnassigned()
-      setSelectedIds(new Set())
-      setAccountFilter(null)
-      setPickerOpen(true)
       // Keep the Assigned/Wastage tables fresh too — wrapped in a transition
       // so the Sync button stays disabled until the refresh completes.
       startTransition(() => {
@@ -529,17 +536,77 @@ export function SyncAndAssign({
 
             {/* LIST */}
             <div className="flex-1 overflow-auto">
-              {loadingUnassigned ? (
-                <div className="p-8 text-center text-neutral-500 text-sm">
-                  Loading…
+              {syncError ? (
+                <div className="p-4">
+                  <div className="bg-red-950/50 border border-red-800 text-red-300 px-3 py-3 rounded text-sm flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="font-medium mb-0.5">Sync failed</div>
+                      <div className="text-xs opacity-90">{syncError}</div>
+                    </div>
+                    {syncError.includes('Settings') && (
+                      <a
+                        href="/app/settings"
+                        className="text-lime-400 hover:underline text-xs shrink-0 whitespace-nowrap"
+                      >
+                        Open Settings →
+                      </a>
+                    )}
+                  </div>
+                  <div className="mt-3 flex justify-end">
+                    <Button
+                      size="sm"
+                      onClick={handleSync}
+                      disabled={syncing || isPending}
+                      className="bg-lime-400 hover:bg-lime-300 text-black font-semibold"
+                    >
+                      <RefreshCw
+                        className={`size-4 mr-1.5 ${syncing ? 'animate-spin' : ''}`}
+                      />
+                      {syncing ? 'Retrying…' : 'Retry sync'}
+                    </Button>
+                  </div>
                 </div>
+              ) : syncing || loadingUnassigned ? (
+                <>
+                  {/* Inline status banner so the user sees we're working. */}
+                  <div className="px-4 py-2 border-b border-neutral-800 bg-neutral-900/40 flex items-center gap-2">
+                    <RefreshCw className="size-3.5 text-lime-400 animate-spin" />
+                    <span className="text-xs text-neutral-400">
+                      {syncing
+                        ? 'Pulling fresh generations from Higgsfield…'
+                        : 'Loading…'}
+                    </span>
+                  </div>
+                  {/* Shimmer rows — same column shape as a real row so the
+                      layout doesn't jump when real data lands. */}
+                  <ul className="divide-y divide-neutral-800">
+                    {Array.from({ length: 6 }).map((_, i) => (
+                      <li
+                        key={i}
+                        className="px-3 py-2 flex items-center gap-3 animate-pulse"
+                      >
+                        <div className="size-5 rounded border-2 border-neutral-700 bg-neutral-900 shrink-0" />
+                        <div className="w-14 h-10 rounded bg-neutral-800 shrink-0" />
+                        <div className="flex-1 min-w-0 space-y-1.5">
+                          <div className="h-3 w-1/2 bg-neutral-800 rounded" />
+                          <div className="h-2 w-1/3 bg-neutral-900 rounded" />
+                        </div>
+                        <div className="h-3 w-10 bg-neutral-800 rounded shrink-0" />
+                      </li>
+                    ))}
+                  </ul>
+                </>
               ) : visibleUnassigned.length === 0 ? (
                 <div className="p-8 text-center text-neutral-500 text-sm">
-                  <p>No unassigned generations.</p>
+                  <p>
+                    {syncMessage
+                      ? "Synced — but nothing new is waiting."
+                      : 'No unassigned generations.'}
+                  </p>
                   <p className="text-xs mt-1">
                     {accountFilter
                       ? 'Try clearing the account filter or sync again.'
-                      : 'Sync again later for new entries.'}
+                      : 'Click Sync again later for new entries.'}
                   </p>
                 </div>
               ) : (
