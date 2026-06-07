@@ -1,9 +1,25 @@
 'use client'
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import Link from 'next/link'
-import { ChevronLeft, ChevronRight, X } from 'lucide-react'
+import { ChevronLeft, ChevronRight, X, Plus } from 'lucide-react'
 import { WORK_STATUS_COLORS, type WorkStatus } from '@/lib/work-helpers'
+import { CreateWorkDialog } from './create-work-dialog'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from '@/components/ui/dialog'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { Button } from '@/components/ui/button'
 
 interface WorkItem {
   id: string
@@ -14,8 +30,15 @@ interface WorkItem {
   endDate: string | null // YYYY-MM-DD
 }
 
+export interface CalendarClient {
+  id: string
+  name: string
+  canCreateWork: boolean
+}
+
 interface Props {
   works: WorkItem[]
+  clients: CalendarClient[]
 }
 
 function getDaysInMonth(year: number, month: number) {
@@ -26,6 +49,12 @@ function getFirstDayOfWeek(year: number, month: number) {
   return new Date(year, month, 1).getDay()
 }
 
+function shiftDate(dateStr: string, days: number): string {
+  const [y, m, d] = dateStr.split('-').map(Number)
+  const dt = new Date(y, m - 1, d + days)
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`
+}
+
 const MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December',
@@ -33,11 +62,25 @@ const MONTH_NAMES = [
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
-export function CalendarView({ works }: Props) {
+export function CalendarView({ works, clients }: Props) {
   const now = new Date()
   const [year, setYear] = useState(now.getFullYear())
   const [month, setMonth] = useState(now.getMonth())
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
+
+  // "+" flow: pick client → open create-work dialog with that client + date.
+  const [pickerDate, setPickerDate] = useState<string | null>(null)
+  const [pickerClientId, setPickerClientId] = useState<string>('')
+  const [creating, setCreating] = useState<{
+    clientId: string
+    clientName: string
+    date: string
+  } | null>(null)
+
+  const eligibleClients = useMemo(
+    () => clients.filter((c) => c.canCreateWork),
+    [clients],
+  )
 
   function prevMonth() {
     if (month === 0) {
@@ -65,8 +108,9 @@ export function CalendarView({ works }: Props) {
   const daysInMonth = getDaysInMonth(year, month)
   const firstDay = getFirstDayOfWeek(year, month)
 
-  // Build a map: "YYYY-MM-DD" → works[]
-  // Works span from startDate to endDate (inclusive)
+  // Build per-date work list. Work order is stable: works.forEach iterates in
+  // a fixed order, so each work lands at the same index on every date it
+  // touches — which keeps multi-day bars visually aligned across columns.
   const worksByDate = new Map<string, WorkItem[]>()
   const noDeadline: WorkItem[] = []
 
@@ -75,12 +119,8 @@ export function CalendarView({ works }: Props) {
       noDeadline.push(w)
       return
     }
-
-    // Get date range: if no startDate, use endDate
     const start = w.startDate ? new Date(w.startDate) : new Date(w.endDate)
     const end = new Date(w.endDate)
-
-    // Add work to all dates in range
     const current = new Date(start)
     while (current <= end) {
       const dateStr = `${current.getFullYear()}-${String(current.getMonth() + 1).padStart(2, '0')}-${String(current.getDate()).padStart(2, '0')}`
@@ -96,10 +136,22 @@ export function CalendarView({ works }: Props) {
   const cells: (number | null)[] = []
   for (let i = 0; i < firstDay; i++) cells.push(null)
   for (let d = 1; d <= daysInMonth; d++) cells.push(d)
-  // Pad to full rows
   while (cells.length % 7 !== 0) cells.push(null)
 
   const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+
+  function handlePlusClick(dateStr: string) {
+    setPickerClientId('')
+    setPickerDate(dateStr)
+  }
+
+  function confirmPicker() {
+    const client = eligibleClients.find((c) => c.id === pickerClientId)
+    if (!client || !pickerDate) return
+    const date = pickerDate
+    setPickerDate(null)
+    setCreating({ clientId: client.id, clientName: client.name, date })
+  }
 
   return (
     <div className="space-y-4">
@@ -149,33 +201,66 @@ export function CalendarView({ works }: Props) {
           const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
           const dayWorks = worksByDate.get(dateStr) || []
           const isToday = dateStr === todayStr
+          const colInWeek = i % 7 // 0=Sun … 6=Sat
 
           return (
             <div
               key={dateStr}
-              className={`bg-neutral-950 min-h-[100px] p-1.5 ${
+              className={`group relative bg-neutral-950 min-h-[100px] p-1.5 ${
                 isToday ? 'ring-1 ring-inset ring-lime-400/50' : ''
               }`}
             >
-              <div
-                className={`text-xs mb-1 ${
-                  isToday
-                    ? 'text-lime-400 font-bold'
-                    : 'text-neutral-500'
-                }`}
-              >
-                {day}
+              <div className="flex items-start justify-between mb-1">
+                <div
+                  className={`text-xs ${
+                    isToday
+                      ? 'text-lime-400 font-bold'
+                      : 'text-neutral-500'
+                  }`}
+                >
+                  {day}
+                </div>
+                {eligibleClients.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => handlePlusClick(dateStr)}
+                    title="Create work on this day"
+                    className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-neutral-800 text-neutral-400 hover:text-lime-400"
+                  >
+                    <Plus className="size-3.5" />
+                  </button>
+                )}
               </div>
               <div className="space-y-0.5">
-                {dayWorks.slice(0, 3).map((w) => (
-                  <Link
-                    key={w.id}
-                    href={`/app/works/${w.id}`}
-                    className={`block text-[10px] leading-tight px-1 py-0.5 rounded truncate border ${WORK_STATUS_COLORS[w.status]} hover:opacity-80 transition-opacity`}
-                  >
-                    {w.title || 'Untitled'}
-                  </Link>
-                ))}
+                {dayWorks.slice(0, 3).map((w) => {
+                  const prevDate = shiftDate(dateStr, -1)
+                  const nextDate = shiftDate(dateStr, +1)
+                  const prevHas =
+                    colInWeek > 0 &&
+                    (worksByDate.get(prevDate)?.includes(w) ?? false)
+                  const nextHas =
+                    colInWeek < 6 &&
+                    (worksByDate.get(nextDate)?.includes(w) ?? false)
+
+                  // Negative margins + flat sides bridge the 1px column gap so
+                  // a multi-day span reads as one continuous bar.
+                  const continuity = [
+                    prevHas ? '-ml-[5px] rounded-l-none border-l-0' : '',
+                    nextHas ? '-mr-[5px] rounded-r-none border-r-0' : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' ')
+
+                  return (
+                    <Link
+                      key={w.id}
+                      href={`/app/works/${w.id}`}
+                      className={`block text-[10px] leading-tight px-1 py-0.5 rounded truncate border ${WORK_STATUS_COLORS[w.status]} hover:opacity-80 transition-opacity ${continuity}`}
+                    >
+                      {prevHas ? ' ' : w.title || 'Untitled'}
+                    </Link>
+                  )
+                })}
                 {dayWorks.length > 3 && (
                   <button
                     type="button"
@@ -264,6 +349,84 @@ export function CalendarView({ works }: Props) {
             </div>
           </div>
         </div>
+      )}
+
+      {/* CLIENT PICKER for "+" on a date */}
+      <Dialog
+        open={pickerDate !== null}
+        onOpenChange={(o) => {
+          if (!o) setPickerDate(null)
+        }}
+      >
+        <DialogContent className="bg-neutral-950 border-neutral-800 text-white">
+          <DialogHeader>
+            <DialogTitle>Create work</DialogTitle>
+            <DialogDescription className="text-neutral-400">
+              {pickerDate
+                ? new Date(pickerDate + 'T00:00:00').toLocaleDateString('en-US', {
+                    weekday: 'long',
+                    month: 'short',
+                    day: 'numeric',
+                    year: 'numeric',
+                  })
+                : ''}
+              {' — pick a client to continue.'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Select
+              value={pickerClientId}
+              onValueChange={(v) => setPickerClientId(v as string)}
+            >
+              <SelectTrigger className="bg-neutral-900 border-neutral-700 w-full">
+                <SelectValue placeholder="Pick a client…">
+                  {(v) => {
+                    const id = v as string | null
+                    const c = id
+                      ? eligibleClients.find((c) => c.id === id)
+                      : null
+                    return c ? c.name : 'Pick a client…'
+                  }}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {eligibleClients.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>
+                    {c.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-neutral-500">
+              Only clients with status Ongoing, Trial, or In Talks can have
+              new works.
+            </p>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setPickerDate(null)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={confirmPicker}
+              disabled={!pickerClientId}
+              className="bg-lime-400 hover:bg-lime-300 text-black font-semibold"
+            >
+              Continue
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {creating && (
+        <CreateWorkDialog
+          open={true}
+          onOpenChange={(o) => {
+            if (!o) setCreating(null)
+          }}
+          clientId={creating.clientId}
+          clientName={creating.clientName}
+          initialDate={creating.date}
+        />
       )}
     </div>
   )

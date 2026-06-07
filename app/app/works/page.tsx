@@ -8,6 +8,9 @@ import {
   type WorkStatus,
 } from "@/lib/work-helpers";
 import { WorksView } from "./works-view";
+import { can } from "@/lib/rbac";
+
+const WORK_ALLOWED_CLIENT_STATUSES = ["trial", "ongoing", "in_talk"];
 
 interface PageProps {
   searchParams: Promise<{ status?: string }>;
@@ -46,6 +49,20 @@ export default async function WorksPage({ searchParams }: PageProps) {
 
   const clientIds = [...new Set(visible.map((w) => w.client_id))];
   const workIds = visible.map((w) => w.id);
+
+  // Full client roster for the calendar "+" picker (all statuses for name
+  // lookup; we tag canCreateWork separately so the UI can grey out ineligible).
+  const canCreateWork = can(membership.role, "works", "create");
+  const { data: allClients } = await supabase
+    .from("clients")
+    .select("id, name, status")
+    .order("name");
+  const calendarClients = (allClients || []).map((c) => ({
+    id: c.id,
+    name: c.name,
+    canCreateWork:
+      canCreateWork && WORK_ALLOWED_CLIENT_STATUSES.includes(c.status),
+  }));
 
   // Pre-fetch work_creators for all visible works so the cards can show
   // every co-owner without N+1.
@@ -166,6 +183,7 @@ export default async function WorksPage({ searchParams }: PageProps) {
           creatorNameMap={creatorNameMap}
           creatorIdsByWork={creatorIdsByWork}
           creditByWork={creditByWork}
+          clients={calendarClients}
         />
       )}
     </div>

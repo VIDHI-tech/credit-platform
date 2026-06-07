@@ -13,11 +13,13 @@ import {
   type ClientStatus,
 } from "@/lib/client-helpers";
 import {
+  WORK_STATUSES,
   WORK_STATUS_COLORS,
   WORK_STATUS_LABELS,
   type WorkStatus,
 } from "@/lib/work-helpers";
 import { StatusDropdown } from "./status-dropdown";
+import { WorkStatusFilter } from "./work-status-filter";
 import { EditClientButton } from "./edit-client-button";
 import { DeleteClientButton } from "./delete-client-button";
 import { CreateWorkButton } from "./create-work-button";
@@ -51,7 +53,7 @@ const RANGE_LABEL: Record<ClientRange, string> = {
 
 interface PageProps {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ range?: string }>;
+  searchParams: Promise<{ range?: string; wstatus?: string }>;
 }
 
 export default async function ClientDetailPage({
@@ -68,6 +70,16 @@ export default async function ClientDetailPage({
     ["all", "week", "month", "year"] as const
   ).includes(rawRange as ClientRange)
     ? (rawRange as ClientRange)
+    : "all";
+
+  // ?wstatus= filters the Works list. "all" (or anything unrecognized) shows
+  // every work. The filter ONLY narrows the rendered list — credit totals,
+  // per-work per-user report, and assigned/wastage tables stay full-scope
+  // because they roll up generations, not works.
+  const workStatusFilter: WorkStatus | "all" = WORK_STATUSES.includes(
+    sp.wstatus as WorkStatus,
+  )
+    ? (sp.wstatus as WorkStatus)
     : "all";
   const daysBack = RANGE_DAYS[range];
   const fromIso =
@@ -316,11 +328,24 @@ export default async function ClientDetailPage({
       </section>
 
       {/* WORKS — full list, regardless of range. Create Work is gated on
-          client status (trial / ongoing / in_talk only). */}
+          client status (trial / ongoing / in_talk only). The status filter
+          is purely visual; it doesn't touch credit totals or the report. */}
+      {(() => {
+        const visibleWorks =
+          workStatusFilter === "all"
+            ? works || []
+            : (works || []).filter((w) => w.status === workStatusFilter);
+        return (
       <section className="bg-neutral-950 border border-neutral-800 rounded-lg overflow-hidden mb-6">
         <div className="px-4 py-3 border-b border-neutral-800 flex items-center justify-between gap-2">
           <div>
             <h2 className="font-semibold text-white">Works</h2>
+            <p className="text-xs text-neutral-500 mt-0.5">
+              {visibleWorks.length} of {works?.length || 0}{" "}
+              {workStatusFilter === "all"
+                ? "total"
+                : WORK_STATUS_LABELS[workStatusFilter]}
+            </p>
             {canCreateWork && !isWorkAllowedStatus && (
               <p className="text-xs text-neutral-500 mt-0.5">
                 Move client to{" "}
@@ -331,9 +356,15 @@ export default async function ClientDetailPage({
               </p>
             )}
           </div>
-          {showCreateWork && (
-            <CreateWorkButton clientId={client.id} clientName={client.name} />
-          )}
+          <div className="flex items-center gap-2">
+            <WorkStatusFilter current={workStatusFilter} />
+            {showCreateWork && (
+              <CreateWorkButton
+                clientId={client.id}
+                clientName={client.name}
+              />
+            )}
+          </div>
         </div>
         {!works || works.length === 0 ? (
           <div className="p-8 text-center text-neutral-500">
@@ -354,9 +385,23 @@ export default async function ClientDetailPage({
               </p>
             )}
           </div>
+        ) : visibleWorks.length === 0 ? (
+          <div className="p-8 text-center text-neutral-500">
+            <p>
+              No works with status{" "}
+              <span className="text-neutral-300">
+                {WORK_STATUS_LABELS[workStatusFilter as WorkStatus]}
+              </span>
+              .
+            </p>
+            <p className="text-sm mt-1">
+              {works.length} other work{works.length === 1 ? "" : "s"} on this
+              client — clear the filter to see them.
+            </p>
+          </div>
         ) : (
           <div className="divide-y divide-neutral-800">
-            {works.map((w) => (
+            {visibleWorks.map((w) => (
               <Link
                 key={w.id}
                 href={`/app/works/${w.id}`}
@@ -422,6 +467,8 @@ export default async function ClientDetailPage({
           </div>
         )}
       </section>
+        );
+      })()}
 
       {/* PER-WORK PER-USER REPORT */}
       <WorkUserReport rows={reportRows} rangeLabel={RANGE_LABEL[range]} />

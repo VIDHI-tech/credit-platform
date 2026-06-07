@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { ViewToggle } from './view-toggle'
-import { CalendarView } from './calendar-view'
+import { CalendarView, type CalendarClient } from './calendar-view'
 import {
   WORK_STATUS_COLORS,
   WORK_STATUS_LABELS,
@@ -34,6 +34,7 @@ interface Props {
   /** Per-work ordered list of every creator user_id (primary first). */
   creatorIdsByWork: Record<string, string[]>
   creditByWork: Record<string, number>
+  clients: CalendarClient[]
 }
 
 export function WorksView({
@@ -42,6 +43,7 @@ export function WorksView({
   creatorNameMap,
   creatorIdsByWork,
   creditByWork,
+  clients,
 }: Props) {
   const [view, setView] = useState<ViewMode>('calendar')
 
@@ -71,6 +73,7 @@ export function WorksView({
             startDate: w.start_date,
             endDate: w.end_date,
           }))}
+          clients={clients}
         />
       ) : (
         <>

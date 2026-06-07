@@ -55,6 +55,8 @@ interface Props {
   onOpenChange: (open: boolean) => void
   clientId: string
   clientName: string
+  /** Pre-fill the schedule range to a single day (YYYY-MM-DD). */
+  initialDate?: string
 }
 
 export function CreateWorkDialog({
@@ -62,6 +64,7 @@ export function CreateWorkDialog({
   onOpenChange,
   clientId,
   clientName,
+  initialDate,
 }: Props) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -75,6 +78,7 @@ export function CreateWorkDialog({
           <WorkForm
             clientId={clientId}
             clientName={clientName}
+            initialDate={initialDate}
             onOpenChange={onOpenChange}
           />
         )}
@@ -86,10 +90,12 @@ export function CreateWorkDialog({
 function WorkForm({
   clientId,
   clientName,
+  initialDate,
   onOpenChange,
 }: {
   clientId: string
   clientName: string
+  initialDate?: string
   onOpenChange: (open: boolean) => void
 }) {
   const router = useRouter()
@@ -99,7 +105,12 @@ function WorkForm({
   const [error, setError] = useState<string | null>(null)
 
   // Step 1: schedule (all optional)
-  const [dateRange, setDateRange] = useState<DateRange | undefined>(undefined)
+  const [dateRange, setDateRange] = useState<DateRange | undefined>(() => {
+    if (!initialDate) return undefined
+    const [y, m, d] = initialDate.split('-').map(Number)
+    const dt = new Date(y, m - 1, d)
+    return { from: dt, to: dt }
+  })
   const [startTime, setStartTime] = useState('')
   const [endTime, setEndTime] = useState('')
 

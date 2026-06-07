@@ -342,6 +342,7 @@ export default async function WorkDetailPage({ params }: PageProps) {
         {/* SYNC & ASSIGN */}
         <SyncAndAssign
           workId={work.id}
+          workTitle={work.title || work.video_type || "Untitled work"}
           clientId={work.client_id}
           clientName={client?.name || ""}
           userRole={membership.role as "master" | "manager" | "creator"}

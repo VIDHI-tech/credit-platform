@@ -188,6 +188,10 @@ export function UnassignButton({
   )
 }
 
+// Renders the per-row action button in the Wastage table. Clicking it pulls
+// the generation fully back to the unassigned pool (clears client/work/waste
+// fields). The label is "Unassign" — replacing the older "Mark Useful" which
+// only flipped is_waste back to false and left the row in the Assigned table.
 export function WastageButton({
   generationId,
   wastedAt,
@@ -209,13 +213,14 @@ export function WastageButton({
   const [isPending, startTransition] = useTransition()
   const [timeLeft, setTimeLeft] = useState<number | null>(null)
 
-  const isMaster = userRole === 'master'
+  const isMasterOrManager = userRole === 'master' || userRole === 'manager'
   const isWaster = wastedBy === userId
   const isWasted = wastedAt !== null
 
   useEffect(() => {
     if (!isWasted || !wastedAt) return
-    if (!isMaster && !isWaster) return
+    if (isMasterOrManager) return
+    if (!isWaster) return
 
     const wastedTime = new Date(wastedAt).getTime()
     function check() {
@@ -229,15 +234,13 @@ export function WastageButton({
     check()
     const interval = setInterval(check, 1000)
     return () => clearInterval(interval)
-  }, [isWasted, wastedAt, isMaster, isWaster])
+  }, [isWasted, wastedAt, isMasterOrManager, isWaster])
 
-  async function handleToggleWaste() {
+  async function handleUnassign() {
     setBusy(true)
     try {
-      const res = await fetch(`/api/generations/${generationId}/waste`, {
+      const res = await fetch(`/api/generations/${generationId}/unassign`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ is_waste: !isWasted }),
       })
       if (res.ok) {
         startTransition(() => {
@@ -245,11 +248,11 @@ export function WastageButton({
         })
       } else {
         const data = await res.json().catch(() => ({}))
-        onError(`Mark Useful failed: ${data.error || 'unknown error'}`)
+        onError(`Unassign failed: ${data.error || 'unknown error'}`)
       }
     } catch (err) {
       onError(
-        `Mark Useful failed: ${err instanceof Error ? err.message : 'network error'}`,
+        `Unassign failed: ${err instanceof Error ? err.message : 'network error'}`,
       )
     } finally {
       setBusy(false)
@@ -258,17 +261,15 @@ export function WastageButton({
 
   if (!isWasted) return null
 
-  // Show useful button only when the user is allowed:
-  //   - master  : anytime
-  //   - waster  : only within the 20s undo window
+  // Visibility: master/manager anytime; waster only within the 60s window.
   const isWithinWindow = isWaster && timeLeft !== null && timeLeft > 0
-  if (!isMaster && !isWithinWindow) return null
+  if (!isMasterOrManager && !isWithinWindow) return null
 
   return (
     <Button
       size="sm"
       variant="outline"
-      onClick={handleToggleWaste}
+      onClick={handleUnassign}
       disabled={busy || isPending}
       className="h-6 text-xs px-2 text-lime-400 border-lime-700 hover:bg-lime-950"
     >
@@ -277,9 +278,9 @@ export function WastageButton({
       ) : (
         <>
           <Undo2 className="size-3 mr-1" />
-          {isMaster && !isWithinWindow
-            ? 'Mark Useful'
-            : `Mark Useful (${timeLeft}s)`}
+          {isMasterOrManager && !isWithinWindow
+            ? 'Unassign'
+            : `Unassign (${timeLeft}s)`}
         </>
       )}
     </Button>
@@ -302,6 +303,16 @@ export function AssignTables({
   const wasted = assignedToClient.filter((g) => g.is_waste)
   const assignedToThisWork = assignedUseful.filter((g) => g.work_id === workId)
   const assignedElsewhere = assignedUseful.filter((g) => g.work_id !== workId)
+
+  // Total credits per bucket
+  const totalAssignedCredits = assignedUseful.reduce(
+    (s, g) => s + parseFloat(g.credits || '0'),
+    0,
+  )
+  const totalWastedCredits = wasted.reduce(
+    (s, g) => s + parseFloat(g.credits || '0'),
+    0,
+  )
 
   // The Rework tag is a CROSS-WORK signal: it flags a row whose source
   // work is in 'rework' status AND is DIFFERENT from the work we're viewing.
@@ -338,9 +349,14 @@ export function AssignTables({
         {/* ASSIGNED TO THIS CLIENT */}
         <div className="bg-neutral-950 border border-neutral-800 rounded-lg overflow-hidden">
           <div className="px-4 py-3 border-b border-neutral-800">
-            <h2 className="font-semibold text-white text-sm">
-              Assigned to {clientName}
-            </h2>
+            <div className="flex items-center justify-between">
+              <h2 className="font-semibold text-white text-sm">
+                Assigned to {clientName}
+              </h2>
+              <span className="text-sm font-bold text-lime-400 font-mono">
+                {totalAssignedCredits.toFixed(1)} cr
+              </span>
+            </div>
             <p className="text-xs text-neutral-500">
               {assignedToThisWork.length} on this work ·{' '}
               {assignedElsewhere.length} on other works
@@ -417,17 +433,22 @@ export function AssignTables({
         {/* WASTAGE */}
         <div className="bg-neutral-950 border border-red-900/50 rounded-lg overflow-hidden">
           <div className="px-4 py-3 border-b border-neutral-800">
-            <h2 className="font-semibold text-white text-sm flex items-center gap-2">
-              Wastage
-              {wasted.length > 0 && (
-                <Badge
-                  variant="outline"
-                  className="text-red-400 border-red-700"
-                >
-                  {wasted.length}
-                </Badge>
-              )}
-            </h2>
+            <div className="flex items-center justify-between">
+              <h2 className="font-semibold text-white text-sm flex items-center gap-2">
+                Wastage
+                {wasted.length > 0 && (
+                  <Badge
+                    variant="outline"
+                    className="text-red-400 border-red-700"
+                  >
+                    {wasted.length}
+                  </Badge>
+                )}
+              </h2>
+              <span className="text-sm font-bold text-red-400 font-mono">
+                {totalWastedCredits.toFixed(1)} cr
+              </span>
+            </div>
             <p className="text-xs text-neutral-500 mt-0.5">
               Marked as not useful
             </p>

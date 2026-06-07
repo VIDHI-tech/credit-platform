@@ -1,7 +1,14 @@
-// app/app/sync/page.tsx — org-scoped Sync & Assign (RLS handles org filtering).
+// app/app/sync/page.tsx — org-scoped Sync & Assign.
+// Per-row: pick a client (optional filter) and a work (required), then hit
+// Assign or Wastage. Both flows attribute the generation to a specific WORK
+// (the work's client_id is derived server-side from the assign-generation
+// route — we never pin credits to a client without a work). The right column
+// shows the org's Assigned + Wastage rows with the same 60-second undo rules
+// used on the work detail page.
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useTransition } from 'react'
+import Link from 'next/link'
 import { createClient } from '@/lib/supabase-browser'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -12,11 +19,24 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import {
+  MediaPreview,
+  UnassignButton,
+  WastageButton,
+} from '@/app/app/works/[id]/assign-tables'
 
 interface Client {
   id: string
   name: string
   industry: string
+}
+
+interface Work {
+  id: string
+  title: string | null
+  video_type: string | null
+  client_id: string
+  status: string
 }
 
 interface Generation {
@@ -30,14 +50,13 @@ interface Generation {
   credits: string
   hf_created_at: string
   client_id: string | null
+  work_id: string | null
+  assigned_at: string | null
+  assigned_by: string | null
+  is_waste: boolean
+  wasted_at: string | null
+  wasted_by: string | null
   hf_connection_label: string | null
-}
-
-interface ClientTotal {
-  client_id: string
-  client_name: string
-  total_credits: number
-  generation_count: number
 }
 
 interface AccessibleAccount {
@@ -46,62 +65,41 @@ interface AccessibleAccount {
   hf_email: string | null
 }
 
-function MediaPreview({
-  url,
-  mediaType,
-  name,
-}: {
-  url: string
-  mediaType: string
-  name: string
-}) {
-  if (mediaType === 'video') {
-    return (
-      <video
-        src={url}
-        className="w-16 h-12 rounded object-cover bg-black"
-        preload="metadata"
-        muted
-        onMouseEnter={(e) => {
-          void (e.currentTarget as HTMLVideoElement).play()
-        }}
-        onMouseLeave={(e) => {
-          const v = e.currentTarget as HTMLVideoElement
-          v.pause()
-          v.currentTime = 0
-        }}
-      />
-    )
-  }
-  return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      src={url}
-      alt={name}
-      className="w-16 h-12 rounded object-cover bg-neutral-800"
-      loading="lazy"
-    />
-  )
+interface RowChoice {
+  clientFilter: string // '' = all clients
+  workId: string
 }
 
 export default function SyncPage() {
   const [syncing, setSyncing] = useState(false)
   const [syncMessage, setSyncMessage] = useState<string | null>(null)
   const [syncError, setSyncError] = useState<string | null>(null)
+
   const [clients, setClients] = useState<Client[]>([])
+  const [works, setWorks] = useState<Work[]>([])
   const [unassigned, setUnassigned] = useState<Generation[]>([])
-  const [clientTotals, setClientTotals] = useState<ClientTotal[]>([])
-  const [assigning, setAssigning] = useState<string | null>(null)
-  const [userRole, setUserRole] = useState<string>('creator')
+  const [assigned, setAssigned] = useState<Generation[]>([])
+  const [wasted, setWasted] = useState<Generation[]>([])
+  const [rowChoices, setRowChoices] = useState<Record<string, RowChoice>>({})
+  const [rowBusy, setRowBusy] = useState<Record<string, 'assign' | 'waste' | null>>({})
+  const [rowError, setRowError] = useState<string | null>(null)
+
+  const [userRole, setUserRole] = useState<'master' | 'manager' | 'creator'>(
+    'creator',
+  )
+  const [userId, setUserId] = useState<string>('')
   const [accessibleAccounts, setAccessibleAccounts] = useState<AccessibleAccount[]>([])
   const [selectedAccountFilter, setSelectedAccountFilter] = useState<string | null>(null)
 
-  // One client instance for the component's lifetime (avoids re-running effects).
+  const [, startTransition] = useTransition()
   const [supabase] = useState(() => createClient())
 
   const loadAccountAccess = useCallback(async () => {
-    const { data: { user } } = await supabase.auth.getUser()
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
     if (!user) return
+    setUserId(user.id)
 
     const { data: membership } = await supabase
       .from('memberships')
@@ -112,10 +110,9 @@ export default function SyncPage() {
       .maybeSingle()
 
     if (!membership) return
-    setUserRole(membership.role)
+    setUserRole(membership.role as 'master' | 'manager' | 'creator')
 
     if (membership.role === 'master' || membership.role === 'manager') {
-      // Master/manager see all enabled accounts
       const { data } = await supabase
         .from('hf_connections')
         .select('id, label, hf_email')
@@ -124,12 +121,11 @@ export default function SyncPage() {
         .order('created_at', { ascending: true })
       setAccessibleAccounts(data || [])
     } else {
-      // Creator: only granted accounts (intersect with enabled)
       const { data: grants } = await supabase
         .from('hf_connection_grants')
         .select('connection_id')
         .eq('user_id', user.id)
-      const grantedIds = (grants || []).map(g => g.connection_id)
+      const grantedIds = (grants || []).map((g) => g.connection_id)
       if (grantedIds.length === 0) {
         setAccessibleAccounts([])
         return
@@ -146,49 +142,30 @@ export default function SyncPage() {
   }, [supabase])
 
   const loadData = useCallback(async () => {
-    // RLS scopes everything to the user's org — no org_id filter needed here.
-    const { data: clientData } = await supabase
-      .from('clients')
-      .select('id, name, industry')
-      .order('name')
+    const [
+      { data: clientData },
+      { data: workData },
+      { data: gens },
+    ] = await Promise.all([
+      supabase.from('clients').select('id, name, industry').order('name'),
+      supabase
+        .from('works')
+        .select('id, title, video_type, client_id, status')
+        .order('created_at', { ascending: false }),
+      supabase
+        .from('generations')
+        .select(
+          'id, external_id, display_name, job_set_type, result_url, media_type, prompt, credits, hf_created_at, client_id, work_id, assigned_at, assigned_by, is_waste, wasted_at, wasted_by, hf_connection_label',
+        )
+        .order('hf_created_at', { ascending: false }),
+    ])
+
     setClients(clientData || [])
-
-    const { data: unassignedData } = await supabase
-      .from('generations')
-      .select('*')
-      .is('client_id', null)
-      .order('hf_created_at', { ascending: false })
-    setUnassigned(unassignedData || [])
-
-    const { data: assignedData } = await supabase
-      .from('generations')
-      .select('client_id, credits')
-      .not('client_id', 'is', null)
-
-    if (assignedData && clientData) {
-      const totals = new Map<string, { credits: number; count: number }>()
-      assignedData.forEach((row) => {
-        if (row.client_id) {
-          const existing = totals.get(row.client_id) || { credits: 0, count: 0 }
-          totals.set(row.client_id, {
-            credits: existing.credits + parseFloat(row.credits || '0'),
-            count: existing.count + 1,
-          })
-        }
-      })
-
-      const totalsArray: ClientTotal[] = Array.from(totals.entries())
-        .map(([clientId, { credits, count }]) => ({
-          client_id: clientId,
-          client_name:
-            clientData.find((c) => c.id === clientId)?.name || 'Unknown',
-          total_credits: credits,
-          generation_count: count,
-        }))
-        .sort((a, b) => b.total_credits - a.total_credits)
-
-      setClientTotals(totalsArray)
-    }
+    setWorks((workData || []) as Work[])
+    const all = (gens || []) as Generation[]
+    setUnassigned(all.filter((g) => !g.client_id))
+    setAssigned(all.filter((g) => g.client_id && !g.is_waste))
+    setWasted(all.filter((g) => g.is_waste))
   }, [supabase])
 
   useEffect(() => {
@@ -207,11 +184,11 @@ export default function SyncPage() {
       const res = await fetch('/api/hf-sync', { method: 'POST' })
       const data = await res.json()
       if (res.status === 409) {
-        if (userRole === 'master') {
-          setSyncError('No Higgsfield account connected. Go to Settings to add one.')
-        } else {
-          setSyncError('You don\'t have access to any Higgsfield account yet. Ask your admin to grant you access.')
-        }
+        setSyncError(
+          userRole === 'master'
+            ? 'No Higgsfield account connected. Go to Settings to add one.'
+            : "You don't have access to any Higgsfield account yet. Ask your admin to grant you access.",
+        )
         return
       }
       if (!res.ok) throw new Error(data.error || 'Sync failed')
@@ -224,28 +201,104 @@ export default function SyncPage() {
     }
   }
 
-  async function handleAssign(generationId: string, clientId: string) {
-    setAssigning(generationId)
+  function setRow(id: string, patch: Partial<RowChoice>) {
+    setRowChoices((prev) => {
+      const cur = prev[id] || { clientFilter: '', workId: '' }
+      return { ...prev, [id]: { ...cur, ...patch } }
+    })
+  }
+
+  function rowOf(id: string): RowChoice {
+    return rowChoices[id] || { clientFilter: '', workId: '' }
+  }
+
+  function worksFor(clientFilter: string): Work[] {
+    return clientFilter ? works.filter((w) => w.client_id === clientFilter) : works
+  }
+
+  async function handleRowAction(gen: Generation, mode: 'assign' | 'waste') {
+    const choice = rowOf(gen.id)
+    if (!choice.workId) {
+      setRowError('Pick a work first.')
+      return
+    }
+    const work = works.find((w) => w.id === choice.workId)
+    if (!work) {
+      setRowError('Selected work not found — refresh.')
+      return
+    }
+    setRowError(null)
+    setRowBusy((prev) => ({ ...prev, [gen.id]: mode }))
+
     try {
-      const res = await fetch('/api/hf-assign', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ generationId, clientId }),
+      const assignRes = await fetch(
+        `/api/works/${work.id}/assign-generation`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            generationId: gen.id,
+            clientId: work.client_id,
+          }),
+        },
+      )
+      if (!assignRes.ok) {
+        const d = await assignRes.json().catch(() => ({}))
+        setRowError(`Assign failed: ${d?.error || assignRes.statusText}`)
+        return
+      }
+
+      if (mode === 'waste') {
+        const wasteRes = await fetch(`/api/generations/${gen.id}/waste`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ is_waste: true }),
+        })
+        if (!wasteRes.ok) {
+          const d = await wasteRes.json().catch(() => ({}))
+          setRowError(`Wastage failed: ${d?.error || wasteRes.statusText}`)
+          return
+        }
+      }
+
+      startTransition(() => {
+        loadData()
       })
-      if (!res.ok) throw new Error('Assign failed')
-      await loadData()
     } catch (err) {
-      console.error(err)
+      setRowError(err instanceof Error ? err.message : 'Action failed')
     } finally {
-      setAssigning(null)
+      setRowBusy((prev) => ({ ...prev, [gen.id]: null }))
     }
   }
 
-  const totalAssigned = clientTotals.reduce((s, c) => s + c.total_credits, 0)
   const totalUnassigned = unassigned.reduce(
     (s, g) => s + parseFloat(g.credits || '0'),
-    0
+    0,
   )
+  const totalAssigned = assigned.reduce(
+    (s, g) => s + parseFloat(g.credits || '0'),
+    0,
+  )
+  const totalWasted = wasted.reduce(
+    (s, g) => s + parseFloat(g.credits || '0'),
+    0,
+  )
+
+  const visibleUnassigned = selectedAccountFilter
+    ? unassigned.filter((g) => g.hf_connection_label === selectedAccountFilter)
+    : unassigned
+
+  const clientNameMap: Record<string, string> = {}
+  clients.forEach((c) => {
+    clientNameMap[c.id] = c.name
+  })
+  const workTitle = (w: Work) => w.title || w.video_type || 'Untitled'
+
+  function refresh() {
+    startTransition(() => {
+      loadData()
+    })
+  }
 
   return (
     <div className="p-6 space-y-6 text-neutral-100">
@@ -253,7 +306,7 @@ export default function SyncPage() {
         <div>
           <h1 className="text-2xl font-bold text-white">Sync &amp; Assign</h1>
           <p className="text-neutral-400 text-sm mt-1">
-            Pull Higgsfield generations and assign them to clients.
+            Pull Higgsfield generations and attribute them to a work.
           </p>
         </div>
         <Button
@@ -289,15 +342,18 @@ export default function SyncPage() {
           {userRole === 'master' ? (
             <>
               No Higgsfield accounts connected yet.{' '}
-              <a href="/app/settings" className="text-lime-400 hover:underline">
+              <Link
+                href="/app/settings"
+                className="text-lime-400 hover:underline"
+              >
                 Add one in Settings
-              </a>{' '}
+              </Link>{' '}
               to start syncing.
             </>
           ) : (
             <>
-              You don&apos;t have access to any Higgsfield account yet. Ask your
-              admin to grant you access from the Users page.
+              You don&apos;t have access to any Higgsfield account yet. Ask
+              your admin to grant you access from the Users page.
             </>
           )}
         </div>
@@ -312,16 +368,32 @@ export default function SyncPage() {
         <div className="bg-red-950/50 border border-red-800 text-red-300 px-4 py-2 rounded text-sm flex items-center justify-between">
           <span>✗ {syncError}</span>
           {syncError.includes('Settings') && (
-            <a href="/app/settings" className="text-lime-400 hover:underline text-xs ml-4">
+            <Link
+              href="/app/settings"
+              className="text-lime-400 hover:underline text-xs ml-4"
+            >
               Open Settings →
-            </a>
+            </Link>
           )}
+        </div>
+      )}
+
+      {rowError && (
+        <div className="bg-red-950/50 border border-red-800 text-red-300 px-4 py-2 rounded text-sm flex items-center justify-between">
+          <span>{rowError}</span>
+          <button
+            type="button"
+            onClick={() => setRowError(null)}
+            className="text-neutral-400 hover:text-white text-xs ml-4"
+          >
+            dismiss
+          </button>
         </div>
       )}
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="bg-neutral-950 border border-neutral-800 rounded-lg p-4">
-          <p className="text-neutral-400 text-xs uppercase">Unassigned Credits</p>
+          <p className="text-neutral-400 text-xs uppercase">Unassigned</p>
           <p className="text-2xl font-bold text-yellow-400 mt-1">
             {totalUnassigned.toFixed(1)}
           </p>
@@ -330,101 +402,112 @@ export default function SyncPage() {
           </p>
         </div>
         <div className="bg-neutral-950 border border-neutral-800 rounded-lg p-4">
-          <p className="text-neutral-400 text-xs uppercase">Assigned Credits</p>
+          <p className="text-neutral-400 text-xs uppercase">Assigned</p>
           <p className="text-2xl font-bold text-green-400 mt-1">
             {totalAssigned.toFixed(1)}
           </p>
           <p className="text-neutral-500 text-xs mt-1">
-            across {clientTotals.length} clients
+            {assigned.length} generations
           </p>
         </div>
         <div className="bg-neutral-950 border border-neutral-800 rounded-lg p-4">
-          <p className="text-neutral-400 text-xs uppercase">Total Tracked</p>
-          <p className="text-2xl font-bold text-white mt-1">
-            {(totalAssigned + totalUnassigned).toFixed(1)}
+          <p className="text-neutral-400 text-xs uppercase">Wastage</p>
+          <p className="text-2xl font-bold text-red-400 mt-1">
+            {totalWasted.toFixed(1)}
+          </p>
+          <p className="text-neutral-500 text-xs mt-1">
+            {wasted.length} generations
           </p>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* TABLE A */}
-        <div className="bg-neutral-950 border border-neutral-800 rounded-lg overflow-hidden">
-          <div className="px-4 py-3 border-b border-neutral-800 flex items-center justify-between">
+      {/* UNASSIGNED — per-row client filter + required work + buttons */}
+      <div className="bg-neutral-950 border border-neutral-800 rounded-lg overflow-hidden">
+        <div className="px-4 py-3 border-b border-neutral-800 flex items-center justify-between">
+          <div className="flex items-center gap-3">
             <h2 className="font-semibold">Unassigned Generations</h2>
-            <Badge
-              variant="outline"
-              className="text-yellow-400 border-yellow-700"
-            >
-              {(selectedAccountFilter
-                ? unassigned.filter(g => g.hf_connection_label === selectedAccountFilter)
-                : unassigned
-              ).length} pending
-            </Badge>
+            <span className="text-sm font-bold text-yellow-400 font-mono">
+              {totalUnassigned.toFixed(1)} cr
+            </span>
           </div>
+          <Badge
+            variant="outline"
+            className="text-yellow-400 border-yellow-700"
+          >
+            {visibleUnassigned.length} pending
+          </Badge>
+        </div>
 
-          {/* ACCOUNT FILTER */}
-          {accessibleAccounts.length > 0 && (
-            <div className="px-4 py-2 border-b border-neutral-800 bg-neutral-900/50 flex flex-wrap gap-2 items-center">
-              <span className="text-xs text-neutral-500">Filter by account:</span>
+        {/* ACCOUNT FILTER */}
+        {accessibleAccounts.length > 0 && (
+          <div className="px-4 py-2 border-b border-neutral-800 bg-neutral-900/50 flex flex-wrap gap-2 items-center">
+            <span className="text-xs text-neutral-500">Filter by account:</span>
+            <button
+              type="button"
+              onClick={() => setSelectedAccountFilter(null)}
+              className={`text-xs px-2 py-1 rounded transition-colors ${
+                selectedAccountFilter === null
+                  ? 'bg-lime-400 text-black'
+                  : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'
+              }`}
+            >
+              All
+            </button>
+            {accessibleAccounts.map((acc) => (
               <button
+                key={acc.id}
                 type="button"
-                onClick={() => setSelectedAccountFilter(null)}
+                onClick={() => setSelectedAccountFilter(acc.label)}
                 className={`text-xs px-2 py-1 rounded transition-colors ${
-                  selectedAccountFilter === null
+                  selectedAccountFilter === acc.label
                     ? 'bg-lime-400 text-black'
                     : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'
                 }`}
+                title={acc.hf_email || ''}
               >
-                All
+                {acc.label}
               </button>
-              {accessibleAccounts.map(acc => (
-                <button
-                  key={acc.id}
-                  type="button"
-                  onClick={() => setSelectedAccountFilter(acc.label)}
-                  className={`text-xs px-2 py-1 rounded transition-colors ${
-                    selectedAccountFilter === acc.label
-                      ? 'bg-lime-400 text-black'
-                      : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'
-                  }`}
-                  title={acc.hf_email || ''}
-                >
-                  {acc.label}
-                </button>
-              ))}
-            </div>
-          )}
+            ))}
+          </div>
+        )}
 
-          {unassigned.length === 0 ? (
-            <div className="p-8 text-center text-neutral-500">
-              <p>No unassigned generations.</p>
-              <p className="text-sm mt-1">Click Sync to load your history.</p>
-            </div>
-          ) : (
-            <div className="overflow-auto max-h-[600px]">
-              <table className="w-full text-sm">
-                <thead className="bg-neutral-900 sticky top-0">
-                  <tr>
-                    <th className="text-left px-3 py-2 text-neutral-400">
-                      Preview
-                    </th>
-                    <th className="text-left px-3 py-2 text-neutral-400">
-                      Model
-                    </th>
-                    <th className="text-right px-3 py-2 text-neutral-400">
-                      Credits
-                    </th>
-                    <th className="text-left px-3 py-2 text-neutral-400">
-                      Assign
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-neutral-800">
-                  {(selectedAccountFilter
-                    ? unassigned.filter(g => g.hf_connection_label === selectedAccountFilter)
-                    : unassigned
-                  ).map((gen) => (
-                    <tr key={gen.id} className="hover:bg-neutral-900/60">
+        {visibleUnassigned.length === 0 ? (
+          <div className="p-8 text-center text-neutral-500">
+            <p>No unassigned generations.</p>
+            <p className="text-sm mt-1">Click Sync to load your history.</p>
+          </div>
+        ) : (
+          <div className="overflow-auto max-h-[600px]">
+            <table className="w-full text-sm">
+              <thead className="bg-neutral-900 sticky top-0">
+                <tr>
+                  <th className="text-left px-3 py-2 text-neutral-400 w-20">
+                    Preview
+                  </th>
+                  <th className="text-left px-3 py-2 text-neutral-400">
+                    Model
+                  </th>
+                  <th className="text-right px-3 py-2 text-neutral-400 w-20">
+                    Credits
+                  </th>
+                  <th className="text-left px-3 py-2 text-neutral-400 w-40">
+                    Client
+                  </th>
+                  <th className="text-left px-3 py-2 text-neutral-400 w-56">
+                    Work *
+                  </th>
+                  <th className="text-right px-3 py-2 text-neutral-400 w-44">
+                    Actions
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-neutral-800">
+                {visibleUnassigned.map((gen) => {
+                  const choice = rowOf(gen.id)
+                  const busy = rowBusy[gen.id] || null
+                  const visibleWorks = worksFor(choice.clientFilter)
+                  return (
+                    <tr key={gen.id} className="hover:bg-neutral-900/40">
                       <td className="px-3 py-2">
                         <MediaPreview
                           url={gen.result_url}
@@ -442,7 +525,7 @@ export default function SyncPage() {
                           </div>
                         )}
                         {gen.prompt && (
-                          <div className="text-neutral-500 text-xs mt-0.5 line-clamp-2 max-w-[140px]">
+                          <div className="text-neutral-500 text-xs mt-0.5 line-clamp-2 max-w-[200px]">
                             {gen.prompt}
                           </div>
                         )}
@@ -460,45 +543,223 @@ export default function SyncPage() {
                             : 'free'}
                         </span>
                       </td>
+                      {/* CLIENT FILTER */}
                       <td className="px-3 py-2">
                         <Select
-                          onValueChange={(clientId) =>
-                            handleAssign(gen.id, clientId as string)
-                          }
-                          disabled={assigning === gen.id}
+                          value={choice.clientFilter || '__all'}
+                          onValueChange={(v) => {
+                            const val = v as string
+                            setRow(gen.id, {
+                              clientFilter: val === '__all' ? '' : val,
+                              workId: '',
+                            })
+                          }}
+                          disabled={busy !== null}
                         >
                           <SelectTrigger className="w-36 h-7 text-xs bg-neutral-900 border-neutral-700">
-                            <SelectValue
-                              placeholder={
-                                assigning === gen.id ? 'Assigning…' : 'Pick client'
-                              }
-                            >
+                            <SelectValue>
                               {(v) => {
                                 const val = v as string | null
-                                if (!val) return assigning === gen.id ? 'Assigning…' : 'Pick client'
-                                const found = clients.find((c) => c.id === val)
-                                return found ? found.name : val
+                                if (!val || val === '__all') return 'All clients'
+                                return clientNameMap[val] || val
                               }}
                             </SelectValue>
                           </SelectTrigger>
                           <SelectContent>
-                            {clients.length === 0 ? (
+                            <SelectItem value="__all" className="text-xs">
+                              All clients
+                            </SelectItem>
+                            {clients.map((c) => (
+                              <SelectItem
+                                key={c.id}
+                                value={c.id}
+                                className="text-xs"
+                              >
+                                {c.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </td>
+                      {/* WORK SELECT (required) */}
+                      <td className="px-3 py-2">
+                        <Select
+                          value={choice.workId}
+                          onValueChange={(v) =>
+                            setRow(gen.id, { workId: v as string })
+                          }
+                          disabled={busy !== null}
+                        >
+                          <SelectTrigger className="w-52 h-7 text-xs bg-neutral-900 border-neutral-700">
+                            <SelectValue placeholder="Pick a work…">
+                              {(v) => {
+                                const val = v as string | null
+                                if (!val) return 'Pick a work…'
+                                const w = works.find((x) => x.id === val)
+                                if (!w) return 'Pick a work…'
+                                const cn =
+                                  clientNameMap[w.client_id] || 'Unknown'
+                                return `${workTitle(w)} · ${cn}`
+                              }}
+                            </SelectValue>
+                          </SelectTrigger>
+                          <SelectContent>
+                            {visibleWorks.length === 0 ? (
                               <div className="px-2 py-1.5 text-xs text-neutral-500">
-                                No clients yet — added in Phase 2.
+                                {works.length === 0
+                                  ? 'No works yet — create one from a Client.'
+                                  : 'No works for this client.'}
                               </div>
                             ) : (
-                              clients.map((c) => (
+                              visibleWorks.map((w) => (
                                 <SelectItem
-                                  key={c.id}
-                                  value={c.id}
+                                  key={w.id}
+                                  value={w.id}
                                   className="text-xs"
                                 >
-                                  {c.name}
+                                  <span className="truncate">
+                                    {workTitle(w)}
+                                  </span>
+                                  <span className="text-neutral-500 ml-2">
+                                    · {clientNameMap[w.client_id] || 'Unknown'}
+                                  </span>
                                 </SelectItem>
                               ))
                             )}
                           </SelectContent>
                         </Select>
+                      </td>
+                      <td className="px-3 py-2">
+                        <div className="flex justify-end gap-1.5">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleRowAction(gen, 'waste')}
+                            disabled={busy !== null || !choice.workId}
+                            className="h-7 text-xs px-2 text-yellow-400 border-yellow-700 hover:bg-yellow-950"
+                          >
+                            {busy === 'waste' ? '…' : 'Wastage'}
+                          </Button>
+                          <Button
+                            size="sm"
+                            onClick={() => handleRowAction(gen, 'assign')}
+                            disabled={busy !== null || !choice.workId}
+                            className="h-7 text-xs px-2 bg-lime-400 hover:bg-lime-300 text-black font-semibold"
+                          >
+                            {busy === 'assign' ? '…' : 'Assign'}
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* ASSIGNED + WASTAGE TABLES — same 60s undo as the work-detail page */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* ASSIGNED */}
+        <div className="bg-neutral-950 border border-neutral-800 rounded-lg overflow-hidden">
+          <div className="px-4 py-3 border-b border-neutral-800">
+            <div className="flex items-center justify-between">
+              <h2 className="font-semibold text-white text-sm">
+                Assigned across the org
+              </h2>
+              <span className="text-sm font-bold text-green-400 font-mono">
+                {totalAssigned.toFixed(1)} cr
+              </span>
+            </div>
+            <p className="text-xs text-neutral-500">
+              {assigned.length} generation{assigned.length === 1 ? '' : 's'}
+            </p>
+          </div>
+          {assigned.length === 0 ? (
+            <div className="p-6 text-center text-neutral-500 text-sm">
+              <p>Nothing assigned yet.</p>
+            </div>
+          ) : (
+            <div className="max-h-[500px] overflow-auto">
+              <table className="w-full text-xs">
+                <tbody className="divide-y divide-neutral-800">
+                  {assigned.map((g) => (
+                    <tr key={g.id} className="hover:bg-neutral-900/60">
+                      <td className="px-2 py-2">
+                        <MediaPreview
+                          url={g.result_url}
+                          mediaType={g.media_type}
+                          name={g.display_name}
+                        />
+                      </td>
+                      <td className="px-2 py-2">
+                        <div className="font-medium text-white">
+                          {g.display_name}
+                        </div>
+                        <div className="text-neutral-500 text-xs mt-0.5 space-y-0.5">
+                          {g.work_id &&
+                            (() => {
+                              const w = works.find((x) => x.id === g.work_id)
+                              if (!w) return null
+                              return (
+                                <div>
+                                  via{' '}
+                                  <Link
+                                    href={`/app/works/${w.id}`}
+                                    className="text-lime-400 hover:underline"
+                                  >
+                                    {workTitle(w)}
+                                  </Link>
+                                  {' · '}
+                                  {clientNameMap[w.client_id] || 'Unknown'}
+                                </div>
+                              )
+                            })()}
+                          {!g.work_id && g.client_id && (
+                            <div>
+                              on{' '}
+                              <Link
+                                href={`/app/clients/${g.client_id}`}
+                                className="text-lime-400 hover:underline"
+                              >
+                                {clientNameMap[g.client_id] || 'Unknown'}
+                              </Link>
+                            </div>
+                          )}
+                          {g.hf_connection_label && (
+                            <div>
+                              from{' '}
+                              <span className="text-lime-400">
+                                {g.hf_connection_label}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-2 py-2 text-right">
+                        <span
+                          className={`font-bold ${
+                            parseFloat(g.credits) > 0
+                              ? 'text-orange-400'
+                              : 'text-neutral-500'
+                          }`}
+                        >
+                          {parseFloat(g.credits) > 0
+                            ? parseFloat(g.credits).toFixed(1)
+                            : 'free'}
+                        </span>
+                      </td>
+                      <td className="px-2 py-2">
+                        <UnassignButton
+                          generationId={g.id}
+                          assignedAt={g.assigned_at}
+                          assignedBy={g.assigned_by}
+                          userRole={userRole}
+                          userId={userId}
+                          onDone={refresh}
+                          onError={(msg) => setRowError(msg)}
+                        />
                       </td>
                     </tr>
                   ))}
@@ -508,50 +769,109 @@ export default function SyncPage() {
           )}
         </div>
 
-        {/* TABLE B */}
-        <div className="bg-neutral-950 border border-neutral-800 rounded-lg overflow-hidden">
+        {/* WASTAGE */}
+        <div className="bg-neutral-950 border border-red-900/50 rounded-lg overflow-hidden">
           <div className="px-4 py-3 border-b border-neutral-800">
-            <h2 className="font-semibold">Client-wise Credit Usage</h2>
+            <div className="flex items-center justify-between">
+              <h2 className="font-semibold text-white text-sm flex items-center gap-2">
+                Wastage
+                {wasted.length > 0 && (
+                  <Badge
+                    variant="outline"
+                    className="text-red-400 border-red-700"
+                  >
+                    {wasted.length}
+                  </Badge>
+                )}
+              </h2>
+              <span className="text-sm font-bold text-red-400 font-mono">
+                {totalWasted.toFixed(1)} cr
+              </span>
+            </div>
+            <p className="text-xs text-neutral-500 mt-0.5">
+              Marked as not useful — Unassign within 60 s to put back in the
+              unassigned pool.
+            </p>
           </div>
-          {clientTotals.length === 0 ? (
-            <div className="p-8 text-center text-neutral-500">
-              <p>No assignments yet.</p>
+          {wasted.length === 0 ? (
+            <div className="p-6 text-center text-neutral-500 text-sm">
+              <p>No wastage yet.</p>
             </div>
           ) : (
-            <div className="divide-y divide-neutral-800">
-              {clientTotals.map((ct, i) => (
-                <div
-                  key={ct.client_id}
-                  className="px-4 py-3 flex items-center justify-between"
-                >
-                  <div className="flex items-center gap-3">
-                    <span className="text-neutral-600 text-sm w-5">#{i + 1}</span>
-                    <div>
-                      <div className="font-medium text-white">
-                        {ct.client_name}
-                      </div>
-                      <div className="text-neutral-500 text-xs">
-                        {ct.generation_count} gen
-                        {ct.generation_count !== 1 ? 's' : ''}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-xl font-bold text-white">
-                      {ct.total_credits.toFixed(1)}
-                    </div>
-                    <div className="text-neutral-500 text-xs">credits</div>
-                  </div>
-                </div>
-              ))}
-              <div className="px-4 py-3 flex items-center justify-between bg-neutral-900">
-                <span className="text-neutral-400 text-sm font-medium">
-                  Total assigned
-                </span>
-                <div className="text-xl font-bold text-lime-400">
-                  {totalAssigned.toFixed(1)}
-                </div>
-              </div>
+            <div className="max-h-[500px] overflow-auto">
+              <table className="w-full text-xs">
+                <tbody className="divide-y divide-neutral-800">
+                  {wasted.map((g) => (
+                    <tr
+                      key={g.id}
+                      className="bg-red-950/10 hover:bg-red-950/20"
+                    >
+                      <td className="px-2 py-2">
+                        <MediaPreview
+                          url={g.result_url}
+                          mediaType={g.media_type}
+                          name={g.display_name}
+                        />
+                      </td>
+                      <td className="px-2 py-2">
+                        <div className="font-medium text-neutral-400 line-through">
+                          {g.display_name}
+                        </div>
+                        <div className="text-xs text-neutral-600 mt-0.5 space-y-0.5">
+                          <div>
+                            Marked{' '}
+                            {g.wasted_at
+                              ? new Date(g.wasted_at).toLocaleTimeString()
+                              : ''}
+                          </div>
+                          {g.work_id &&
+                            (() => {
+                              const w = works.find((x) => x.id === g.work_id)
+                              if (!w) return null
+                              return (
+                                <div>
+                                  on{' '}
+                                  <Link
+                                    href={`/app/works/${w.id}`}
+                                    className="text-red-400 hover:underline"
+                                  >
+                                    {workTitle(w)}
+                                  </Link>
+                                </div>
+                              )
+                            })()}
+                          {g.hf_connection_label && (
+                            <div>
+                              from{' '}
+                              <span className="text-red-400">
+                                {g.hf_connection_label}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-2 py-2 text-right">
+                        <span className="font-bold text-red-400">
+                          {parseFloat(g.credits) > 0
+                            ? parseFloat(g.credits).toFixed(1)
+                            : 'free'}
+                        </span>
+                      </td>
+                      <td className="px-2 py-2">
+                        <WastageButton
+                          generationId={g.id}
+                          wastedAt={g.wasted_at}
+                          wastedBy={g.wasted_by}
+                          userRole={userRole}
+                          userId={userId}
+                          onDone={refresh}
+                          onError={(msg) => setRowError(msg)}
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </div>

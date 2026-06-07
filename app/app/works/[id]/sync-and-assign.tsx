@@ -20,18 +20,10 @@
 // router.refresh() pulls the new server state so the Assigned + Wastage
 // tables below update.
 
-import { useState, useEffect, useCallback, useTransition } from 'react'
+import { useState, useCallback, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase-browser'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { Check, X, RefreshCw } from 'lucide-react'
 
 interface UnassignedGeneration {
@@ -42,11 +34,6 @@ interface UnassignedGeneration {
   credits: string
   hf_created_at: string
   hf_connection_label: string | null
-}
-
-interface ClientOption {
-  id: string
-  name: string
 }
 
 export interface CreatorStat {
@@ -62,6 +49,7 @@ export interface CreatorStat {
 
 interface Props {
   workId: string
+  workTitle: string
   clientId: string
   clientName: string
   userRole: 'master' | 'manager' | 'creator'
@@ -101,6 +89,7 @@ function MediaPreview({
 
 export function SyncAndAssign({
   workId,
+  workTitle,
   clientId,
   clientName,
   userRole,
@@ -126,10 +115,9 @@ export function SyncAndAssign({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [accountFilter, setAccountFilter] = useState<string | null>(null)
 
-  // Modal B — destination
+  // Modal B — destination. Always THIS work; no picker. The "+ Sync & Assign"
+  // flow on the work detail page is scoped to this work by design.
   const [destOpen, setDestOpen] = useState(false)
-  const [clients, setClients] = useState<ClientOption[]>([])
-  const [destClientId, setDestClientId] = useState<string>(clientId)
   const [batchBusy, setBatchBusy] = useState<null | 'actual' | 'waste'>(null)
   const [batchError, setBatchError] = useState<string | null>(null)
 
@@ -149,23 +137,6 @@ export function SyncAndAssign({
     setUnassigned(useful as UnassignedGeneration[])
     setLoadingUnassigned(false)
   }, [supabase])
-
-  // Load the client dropdown when the destination modal opens.
-  useEffect(() => {
-    if (!destOpen) return
-    let cancelled = false
-    async function load() {
-      const { data } = await supabase
-        .from('clients')
-        .select('id, name')
-        .order('name')
-      if (!cancelled) setClients(data || [])
-    }
-    load()
-    return () => {
-      cancelled = true
-    }
-  }, [destOpen, supabase])
 
   async function handleSync() {
     // Open the picker IMMEDIATELY so the user sees feedback. The modal
@@ -224,6 +195,12 @@ export function SyncAndAssign({
     ? unassigned.filter((g) => g.hf_connection_label === accountFilter)
     : unassigned
 
+  // Total credits in the unassigned picker
+  const totalUnassignedCredits = visibleUnassigned.reduce(
+    (s, g) => s + parseFloat(g.credits || '0'),
+    0,
+  )
+
   const allVisibleSelected =
     visibleUnassigned.length > 0 &&
     visibleUnassigned.every((g) => selectedIds.has(g.id))
@@ -247,37 +224,36 @@ export function SyncAndAssign({
 
   function openDestination() {
     if (selectedIds.size === 0) return
-    setDestClientId(clientId) // default to current work's client
     setBatchError(null)
     setDestOpen(true)
   }
 
   async function runBatch(mode: 'actual' | 'waste') {
     if (selectedIds.size === 0) return
-    if (!destClientId) {
-      setBatchError('Pick a client first.')
-      return
-    }
     setBatchBusy(mode)
     setBatchError(null)
     const ids = Array.from(selectedIds)
-    const targetClientId = destClientId
+    const targetWorkId = workId
+    const targetClientId = clientId
 
-    // Step 1 — always assign-generation first so client_id (and, when the
-    // picked client matches the current work, work_id) are set. The API now
-    // permits cross-client assignment: work_id ends up NULL when the picked
-    // client differs from this work's client, so the generation lives on
-    // that client at the client level without being chained to a foreign
-    // work.
+    // Step 1 — assign-generation against the chosen work. The API's URL
+    // workId IS the destination, so work_id is always populated. Wastage
+    // and Assigned both attribute to a specific work going forward.
     const failures: string[] = []
     const assignedIds: string[] = []
     await Promise.all(
       ids.map(async (gid) => {
-        const res = await fetch(`/api/works/${workId}/assign-generation`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ generationId: gid, clientId: targetClientId }),
-        })
+        const res = await fetch(
+          `/api/works/${targetWorkId}/assign-generation`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              generationId: gid,
+              clientId: targetClientId,
+            }),
+          },
+        )
         if (!res.ok) {
           const d = await res.json().catch(() => ({}))
           failures.push(`${gid.slice(0, 8)}: ${d?.error || res.statusText}`)
@@ -334,14 +310,13 @@ export function SyncAndAssign({
       return
     }
 
-    // Full success — close modals and route to the destination client.
+    // Full success — close modals and refresh in place.
     setDestOpen(false)
     setPickerOpen(false)
     setSelectedIds(new Set())
     // Wrapped in a transition so the modal buttons stay disabled until the
-    // server-rendered tables on the client page actually render.
+    // server-rendered tables actually render.
     startTransition(() => {
-      router.push(`/app/clients/${targetClientId}`)
       router.refresh()
     })
   }
@@ -457,9 +432,14 @@ export function SyncAndAssign({
             <div className="sticky top-0 z-10 bg-neutral-950 border-b border-neutral-800 px-4 py-3">
               <div className="flex items-center justify-between gap-3 mb-3">
                 <div>
-                  <h2 className="font-semibold text-white text-sm">
-                    Pick generations to attribute
-                  </h2>
+                  <div className="flex items-center gap-3">
+                    <h2 className="font-semibold text-white text-sm">
+                      Pick generations to attribute
+                    </h2>
+                    <span className="text-sm font-bold text-yellow-400 font-mono">
+                      {totalUnassignedCredits.toFixed(1)} cr
+                    </span>
+                  </div>
                   <p className="text-xs text-neutral-500 mt-0.5">
                     {selectedIds.size} of {visibleUnassigned.length} selected
                     {accountFilter ? ` · filtered: ${accountFilter}` : ''}
@@ -716,54 +696,17 @@ export function SyncAndAssign({
 
             <div className="p-4 space-y-4">
               <div>
-                <label className="text-xs text-neutral-400 uppercase tracking-wider">
-                  Client
-                </label>
-                <Select
-                  value={destClientId}
-                  onValueChange={(v) => setDestClientId(v as string)}
-                  disabled={batchBusy !== null || isPending}
-                >
-                  <SelectTrigger className="mt-1 bg-neutral-900 border-neutral-700">
-                    <SelectValue>
-                      {(v) => {
-                        const val = v as string | null
-                        if (!val) return 'Pick a client'
-                        const found = clients.find((c) => c.id === val)
-                        if (found) return found.name
-                        if (val === clientId) return clientName
-                        return val
-                      }}
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {clients.length === 0 ? (
-                      <div className="px-2 py-1.5 text-xs text-neutral-500">
-                        Loading clients…
-                      </div>
-                    ) : (
-                      clients.map((c) => (
-                        <SelectItem key={c.id} value={c.id}>
-                          {c.name}
-                          {c.id === clientId && (
-                            <Badge
-                              variant="outline"
-                              className="ml-2 text-lime-300 border-lime-700 text-[10px]"
-                            >
-                              this work
-                            </Badge>
-                          )}
-                        </SelectItem>
-                      ))
-                    )}
-                  </SelectContent>
-                </Select>
-                {destClientId !== clientId && (
-                  <div className="mt-2 bg-yellow-950/30 border border-yellow-800 text-yellow-300 px-3 py-2 rounded text-xs">
-                    Heads-up: you&apos;re assigning to a different client. These
-                    generations will not appear in this work&apos;s totals.
+                <div className="text-[10px] text-neutral-500 uppercase tracking-wider">
+                  Destination work
+                </div>
+                <div className="mt-1 px-3 py-2 rounded border border-neutral-800 bg-neutral-900/40">
+                  <div className="text-sm font-medium text-white truncate">
+                    {workTitle}
                   </div>
-                )}
+                  <div className="text-xs text-neutral-500 mt-0.5 truncate">
+                    {clientName}
+                  </div>
+                </div>
               </div>
 
               {batchError && (
@@ -777,7 +720,9 @@ export function SyncAndAssign({
               <Button
                 variant="outline"
                 onClick={() => runBatch('waste')}
-                disabled={batchBusy !== null || isPending || selectedIds.size === 0}
+                disabled={
+                  batchBusy !== null || isPending || selectedIds.size === 0
+                }
                 className="text-yellow-400 border-yellow-700 hover:bg-yellow-950"
               >
                 {batchBusy === 'waste'
@@ -788,14 +733,16 @@ export function SyncAndAssign({
               </Button>
               <Button
                 onClick={() => runBatch('actual')}
-                disabled={batchBusy !== null || isPending || selectedIds.size === 0}
+                disabled={
+                  batchBusy !== null || isPending || selectedIds.size === 0
+                }
                 className="bg-lime-400 hover:bg-lime-300 text-black font-semibold"
               >
                 {batchBusy === 'actual'
                   ? 'Assigning…'
                   : isPending
                     ? 'Updating…'
-                    : 'Actual usage'}
+                    : 'Assign'}
               </Button>
             </div>
           </div>

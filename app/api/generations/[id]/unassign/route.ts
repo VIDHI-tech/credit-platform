@@ -1,11 +1,18 @@
-// app/api/generations/[id]/unassign/route.ts — unassign a generation from its client/work.
-// Creator: only within 60s of assignment. Master/manager: anytime.
-// (Window kept in sync with the client-side countdown in assign-tables.tsx.)
+// app/api/generations/[id]/unassign/route.ts
+// Pull a generation fully back to "unassigned" — clears client_id, work_id,
+// assigned_*, AND waste fields. Used both from the Assigned table (undo an
+// assignment) and from the Wastage table (undo a waste so the row returns
+// to the unassigned pool, not to the assigned bucket).
+//
+// Permission: master/manager anytime. Creator within 60s of EITHER their
+// own assignment or their own waste action, whichever is more recent.
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
+
+const UNDO_WINDOW_MS = 60_000
 
 export async function POST(
   _req: NextRequest,
@@ -22,17 +29,17 @@ export async function POST(
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
     }
 
-    // Get the generation
     const { data: gen } = await supabase
       .from('generations')
-      .select('id, assigned_by, assigned_at, org_id')
+      .select(
+        'id, assigned_by, assigned_at, wasted_by, wasted_at, is_waste, org_id',
+      )
       .eq('id', generationId)
       .maybeSingle()
     if (!gen) {
       return NextResponse.json({ error: 'Generation not found' }, { status: 404 })
     }
 
-    // Get user's membership
     const { data: membership } = await supabase
       .from('memberships')
       .select('role, org_id')
@@ -43,24 +50,29 @@ export async function POST(
       return NextResponse.json({ error: 'Not a member' }, { status: 403 })
     }
 
-    const isMasterOrManager = membership.role === 'master' || membership.role === 'manager'
+    const isMasterOrManager =
+      membership.role === 'master' || membership.role === 'manager'
 
     if (!isMasterOrManager) {
-      // Creator: must be the one who assigned it, within 60s
-      if (gen.assigned_by !== user.id) {
+      // Creator: ownership + recency check. We accept the action if EITHER
+      // the assignment-window OR (for wasted rows) the waste-window is open
+      // for this user. The two are usually within seconds of each other.
+      const now = Date.now()
+      const wasteOk =
+        gen.is_waste &&
+        gen.wasted_by === user.id &&
+        gen.wasted_at &&
+        now - new Date(gen.wasted_at).getTime() <= UNDO_WINDOW_MS
+      const assignOk =
+        gen.assigned_by === user.id &&
+        gen.assigned_at &&
+        now - new Date(gen.assigned_at).getTime() <= UNDO_WINDOW_MS
+
+      if (!wasteOk && !assignOk) {
         return NextResponse.json(
-          { error: 'You did not assign this generation' },
+          { error: 'Unassign window expired or not your row' },
           { status: 403 }
         )
-      }
-      if (gen.assigned_at) {
-        const elapsed = Date.now() - new Date(gen.assigned_at).getTime()
-        if (elapsed > 60000) {
-          return NextResponse.json(
-            { error: 'Unassign window expired (60 seconds)' },
-            { status: 403 }
-          )
-        }
       }
     }
 
@@ -71,6 +83,9 @@ export async function POST(
         work_id: null,
         assigned_at: null,
         assigned_by: null,
+        is_waste: false,
+        wasted_at: null,
+        wasted_by: null,
       })
       .eq('id', generationId)
 
