@@ -184,6 +184,15 @@ export const ACCESS = {
     creator: { view: true,  create: false, edit: false, delete: true  },
   },
 
+  // ── STUDIO ────────────────────────────────────────────────────────────────
+  // Prompt Architect + virality engine. Everyone can create/enhance their own
+  // prompts; only master/manager can delete others'.
+  studio: {
+    master:  { view: true,  create: true,  edit: true,  delete: true  },
+    manager: { view: true,  create: true,  edit: true,  delete: true  },
+    creator: { view: true,  create: true,  edit: true,  delete: false },
+  },
+
 } satisfies Record<string, AccessMap>
 
 export type Resource = keyof typeof ACCESS

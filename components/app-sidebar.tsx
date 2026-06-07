@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useTransition } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import {
@@ -8,6 +8,7 @@ import {
   LayoutDashboard,
   Building2,
   ClipboardList,
+  Sparkles,
   RefreshCw,
   BarChart3,
   Users,
@@ -55,11 +56,13 @@ export function AppSidebar({
   const pathname = usePathname()
   const router = useRouter()
   const [signingOut, setSigningOut] = useState(false)
+  const [isPending, startTransition] = useTransition()
 
   const nav = [
     { title: 'Dashboard', href: '/app/dashboard', icon: LayoutDashboard },
     { title: 'Clients', href: '/app/clients', icon: Building2 },
     { title: 'Works', href: '/app/works', icon: ClipboardList },
+    { title: 'Studio', href: '/app/studio', icon: Sparkles },
     { title: 'Sync & Assign', href: '/app/sync', icon: RefreshCw },
   ]
   if (can(role, 'reports', 'view')) {
@@ -76,8 +79,10 @@ export function AppSidebar({
     setSigningOut(true)
     const supabase = createClient()
     await supabase.auth.signOut()
-    router.push('/')
-    router.refresh()
+    startTransition(() => {
+      router.push('/')
+      router.refresh()
+    })
   }
 
   return (
@@ -151,13 +156,13 @@ export function AppSidebar({
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
-                <AlertDialogCancel disabled={signingOut}>Cancel</AlertDialogCancel>
+                <AlertDialogCancel disabled={signingOut || isPending}>Cancel</AlertDialogCancel>
                 <AlertDialogAction
                   onClick={handleLogout}
-                  disabled={signingOut}
+                  disabled={signingOut || isPending}
                   className="bg-lime-400 hover:bg-lime-300 text-black font-semibold"
                 >
-                  {signingOut ? 'Signing out…' : 'Confirm sign out'}
+                  {signingOut || isPending ? 'Signing out…' : 'Confirm sign out'}
                 </AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>
