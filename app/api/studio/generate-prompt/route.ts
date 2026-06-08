@@ -5,7 +5,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
-import { callClaude, parseClaudeJson, ARCHITECT_MODEL } from '@/lib/studio/claude'
+import { callLLM, parseLLMJson, ARCHITECT_MODEL } from '@/lib/studio/llm'
 import { architectSystemPrompt } from '@/lib/studio/system-prompts'
 import { renderPrompt } from '@/lib/studio/render-prompt'
 import type { GeneratedVariant, MediaType } from '@/lib/studio/schema'
@@ -59,14 +59,15 @@ export async function POST(req: NextRequest) {
       .filter(Boolean)
       .join('\n')
 
-    const raw = await callClaude({
+    const raw = await callLLM({
       system: architectSystemPrompt(body.mediaType),
       user: userMsg,
       model: ARCHITECT_MODEL,
       maxTokens: 8000,
+      jsonMode: true, // Gemini guarantees parseable JSON output
     })
 
-    const parsed = parseClaudeJson<{ variants: GeneratedVariant[] }>(raw)
+    const parsed = parseLLMJson<{ variants: GeneratedVariant[] }>(raw)
     if (!parsed.variants?.length) {
       return NextResponse.json({ error: 'No variants generated' }, { status: 502 })
     }
