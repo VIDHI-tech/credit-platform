@@ -43,24 +43,41 @@ export function StatusDropdown({ clientId, currentStatus }: Props) {
 
     try {
       const supabase = createClient()
-      const { data, error: updateError } = await supabase
-        .from('clients')
-        .update({ status: newStatus })
-        .eq('id', clientId)
-        .select('id')
+      // Single atomic RPC: updates the client AND cascades work statuses
+      // (paused/ended → lock all non-completed works; ongoing/trial/in_talk/
+      // outreach → unlock paused works). Replaces the previous direct
+      // .update() call which had no cascade. See supabase/client-work-cascade.sql.
+      const { data, error: rpcError } = await supabase.rpc(
+        'update_client_status_with_cascade',
+        { p_client_id: clientId, p_new_status: newStatus },
+      )
 
-      if (updateError) {
-        console.error('[status-dropdown] update failed:', updateError)
+      if (rpcError) {
+        console.error('[status-dropdown] rpc failed:', rpcError)
         setStatus(prev)
-        setError(updateError.message)
+        // Postgres ERRCODEs: 42501 = caller not permitted; 22023 = invalid
+        // status string. Map both to friendly messages so the user sees
+        // something actionable instead of the raw PG error.
+        if (rpcError.code === '42501') {
+          setError('Not permitted — you are not a member of this client’s organization')
+        } else if (rpcError.code === '22023') {
+          setError('Invalid status')
+        } else {
+          setError(rpcError.message)
+        }
         return
       }
-      // RLS may silently filter the UPDATE (policy denies → 0 rows touched,
-      // no error). Verify here so the UI never lies about persistence.
-      if (!data || data.length === 0) {
-        setStatus(prev)
-        setError('Not permitted — no row updated')
-        return
+      // data is the JSONB return: { client_id, status, works_affected }.
+      // Soft logging only — we don't surface the count unless > 0 below.
+      const worksAffected =
+        data && typeof data === 'object' && 'works_affected' in data
+          ? Number((data as { works_affected: number }).works_affected) || 0
+          : 0
+      if (worksAffected > 0) {
+        // Helpful breadcrumb in dev so the cascade is observable.
+        console.log(
+          `[status-dropdown] cascade updated ${worksAffected} work(s)`,
+        )
       }
       startTransition(() => {
         router.refresh()

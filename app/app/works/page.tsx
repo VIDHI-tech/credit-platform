@@ -73,7 +73,7 @@ export default async function WorksPage({ searchParams }: PageProps) {
   ] = await Promise.all([
     supabase
       .from("clients")
-      .select("id, name")
+      .select("id, name, status")
       .in("id", clientIds.length ? clientIds : [PLACEHOLDER]),
     supabase
       .from("generations")
@@ -98,8 +98,12 @@ export default async function WorksPage({ searchParams }: PageProps) {
     .in("user_id", creatorIds.length ? creatorIds : [PLACEHOLDER]);
 
   const clientNameMap: Record<string, string> = {};
+  // Section 1 — Client→Work cascade lock. WorksView reads this map to
+  // decide which works render a lock badge (calendar) / amber chip (cards).
+  const clientStatusMap: Record<string, string> = {};
   (clients || []).forEach((c) => {
     clientNameMap[c.id] = c.name;
+    clientStatusMap[c.id] = c.status;
   });
   const creatorNameMap: Record<string, string> = {};
   (creators || []).forEach((c) => {
@@ -180,6 +184,7 @@ export default async function WorksPage({ searchParams }: PageProps) {
         <WorksView
           works={visible}
           clientNameMap={clientNameMap}
+          clientStatusMap={clientStatusMap}
           creatorNameMap={creatorNameMap}
           creatorIdsByWork={creatorIdsByWork}
           creditByWork={creditByWork}

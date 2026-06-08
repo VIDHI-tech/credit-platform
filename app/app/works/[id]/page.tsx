@@ -8,6 +8,7 @@ import { requireActiveMembership } from "@/lib/auth-helpers";
 import { createClient } from "@/lib/supabase-server";
 import { notFound } from "next/navigation";
 import Link from "next/link";
+import { Lock } from "lucide-react";
 import {
   WORK_STATUS_COLORS,
   WORK_STATUS_LABELS,
@@ -206,6 +207,12 @@ export default async function WorkDetailPage({ params }: PageProps) {
     "delete",
   );
 
+  // Section 1 — cascade lock derivation. Surfaced in two places: the
+  // banner below the back link, and as the `locked` prop on
+  // StatusActionButtons (which hides the buttons + renders the pill).
+  const clientLocked =
+    client?.status === "paused" || client?.status === "ended";
+
   return (
     <div className="p-6 text-neutral-100">
       <Link
@@ -214,6 +221,26 @@ export default async function WorkDetailPage({ params }: PageProps) {
       >
         ← Back to Works
       </Link>
+
+      {/* CLIENT-LOCK BANNER — appears when the client cascade has locked
+          this work. Amber for visibility; the message explains the only way
+          to unlock (flip the client status back to an active state). */}
+      {clientLocked && (
+        <div className="mb-4 flex items-start gap-2 rounded-lg bg-amber-950/40 border border-amber-800 px-4 py-2 text-sm text-amber-300">
+          <Lock className="size-4 shrink-0 mt-0.5" />
+          <p className="leading-relaxed">
+            This work is locked because client{" "}
+            <Link
+              href={`/app/clients/${work.client_id}`}
+              className="text-amber-200 underline-offset-2 hover:underline"
+            >
+              {client?.name}
+            </Link>{" "}
+            is <span className="font-medium">{client?.status}</span>. Change
+            the client status back to an active state to unlock editing.
+          </p>
+        </div>
+      )}
 
       {/* HEADER */}
       <div className="flex items-start justify-between gap-4 mb-2">
@@ -258,9 +285,27 @@ export default async function WorkDetailPage({ params }: PageProps) {
             fileContent={instructionsFileContent}
             notes={work.notes}
           />
-          {transitions.length > 0 && (
-            <StatusActionButtons workId={work.id} transitions={transitions} />
-          )}
+          {(() => {
+            // Section 1 — Client→Work cascade lock. When the client is paused
+            // or ended, every work in that client is locked: status buttons
+            // are hidden and a Locked pill renders instead. Server-side
+            // /api/works/[id]/status returns 409 if anyone bypasses the UI.
+            const clientLocked =
+              client?.status === "paused" || client?.status === "ended";
+            if (clientLocked) {
+              return (
+                <StatusActionButtons
+                  workId={work.id}
+                  transitions={[]}
+                  locked
+                  clientStatus={client?.status as "paused" | "ended"}
+                />
+              );
+            }
+            return transitions.length > 0 ? (
+              <StatusActionButtons workId={work.id} transitions={transitions} />
+            ) : null;
+          })()}
           <WorkActions
             work={{
               id: work.id,

@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
+import { Lock } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { WorkStatus } from '@/lib/work-helpers'
 
@@ -14,6 +15,12 @@ interface Transition {
 interface Props {
   workId: string
   transitions: Transition[]
+  /** Section 1 — client cascade lock. When true the status buttons are
+   *  hidden and a small "Locked" pill shows the reason. The server route
+   *  also rejects (409) so this is a UX hint, not a security boundary. */
+  locked?: boolean
+  /** The client status when `locked` is true — for the pill text. */
+  clientStatus?: 'paused' | 'ended' | null
 }
 
 const colors: Record<Transition['variant'], string> = {
@@ -23,7 +30,12 @@ const colors: Record<Transition['variant'], string> = {
   secondary: 'bg-neutral-700 hover:bg-neutral-600 text-white',
 }
 
-export function StatusActionButtons({ workId, transitions }: Props) {
+export function StatusActionButtons({
+  workId,
+  transitions,
+  locked = false,
+  clientStatus = null,
+}: Props) {
   const router = useRouter()
   const [busy, setBusy] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
@@ -48,6 +60,18 @@ export function StatusActionButtons({ workId, transitions }: Props) {
       router.refresh()
     })
     setBusy(null)
+  }
+
+  // Locked branch — short-circuit before rendering the button row.
+  if (locked) {
+    return (
+      <div className="flex flex-col items-end gap-1">
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-950/40 border border-amber-800 px-3 py-1 text-xs text-amber-300">
+          <Lock className="size-3" />
+          Locked — client {clientStatus ?? 'paused/ended'}
+        </span>
+      </div>
+    )
   }
 
   // Disable every button while ANY transition is in-flight OR the refresh

@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react'
 import Link from 'next/link'
-import { ChevronLeft, ChevronRight, X, Plus } from 'lucide-react'
+import { ChevronLeft, ChevronRight, X, Plus, Lock } from 'lucide-react'
 import { WORK_STATUS_COLORS, type WorkStatus } from '@/lib/work-helpers'
 import { CreateWorkDialog } from './create-work-dialog'
 import {
@@ -28,6 +28,11 @@ interface WorkItem {
   status: WorkStatus
   startDate: string | null // YYYY-MM-DD
   endDate: string | null // YYYY-MM-DD
+  /** Section 1 — true when the work's client is paused/ended. Drives the
+   *  small Lock icon on the chip + the "Locked" tag in the day modal. */
+  isLocked?: boolean
+  /** The client's actual status — for the tooltip on the lock icon. */
+  clientStatus?: string | null
 }
 
 export interface CalendarClient {
@@ -255,9 +260,25 @@ export function CalendarView({ works, clients }: Props) {
                     <Link
                       key={w.id}
                       href={`/app/works/${w.id}`}
-                      className={`block text-[10px] leading-tight px-1 py-0.5 rounded truncate border ${WORK_STATUS_COLORS[w.status]} hover:opacity-80 transition-opacity ${continuity}`}
+                      className={`flex items-center gap-1 text-[10px] leading-tight px-1 py-0.5 rounded truncate border ${WORK_STATUS_COLORS[w.status]} hover:opacity-80 transition-opacity ${continuity}`}
+                      title={
+                        w.isLocked
+                          ? `Locked — client ${w.clientStatus ?? 'paused/ended'}`
+                          : undefined
+                      }
                     >
-                      {prevHas ? ' ' : w.title || 'Untitled'}
+                      {prevHas ? (
+                        <span className="truncate">{' '}</span>
+                      ) : (
+                        <>
+                          {w.isLocked && (
+                            <Lock className="size-2.5 shrink-0 text-amber-300" />
+                          )}
+                          <span className="truncate">
+                            {w.title || 'Untitled'}
+                          </span>
+                        </>
+                      )}
                     </Link>
                   )
                 })}
@@ -287,9 +308,17 @@ export function CalendarView({ works, clients }: Props) {
               <Link
                 key={w.id}
                 href={`/app/works/${w.id}`}
-                className={`text-[11px] px-2 py-1 rounded border ${WORK_STATUS_COLORS[w.status]} hover:opacity-80 transition-opacity`}
+                className={`inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded border ${WORK_STATUS_COLORS[w.status]} hover:opacity-80 transition-opacity`}
+                title={
+                  w.isLocked
+                    ? `Locked — client ${w.clientStatus ?? 'paused/ended'}`
+                    : undefined
+                }
               >
-                {w.title || 'Untitled'} · {w.clientName}
+                {w.isLocked && (
+                  <Lock className="size-3 shrink-0 text-amber-300" />
+                )}
+                <span>{w.title || 'Untitled'} · {w.clientName}</span>
               </Link>
             ))}
           </div>

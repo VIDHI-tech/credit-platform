@@ -46,11 +46,33 @@ export async function PATCH(
 
     const { data: work } = await supabase
       .from('works')
-      .select('id, org_id, creator_id, status')
+      .select('id, org_id, creator_id, status, client_id')
       .eq('id', id)
       .maybeSingle()
     if (!work) {
       return NextResponse.json({ error: 'Work not found' }, { status: 404 })
+    }
+
+    // Section 1 — Client→Work cascade lock. If the client is paused/ended,
+    // its works are locked: nobody (not even master) can flip status from
+    // the work surface. The only way out is to change the client back to
+    // an active state, which the cascade RPC will then unlock paused works
+    // through. Server-side check defends against a stale UI button click
+    // (the dropdown will normally be disabled, but UI state can drift).
+    if (work.client_id) {
+      const { data: client } = await supabase
+        .from('clients')
+        .select('status')
+        .eq('id', work.client_id)
+        .maybeSingle()
+      if (client && (client.status === 'paused' || client.status === 'ended')) {
+        return NextResponse.json(
+          {
+            error: `Work is locked — its client is ${client.status}. Change the client status to unlock.`,
+          },
+          { status: 409 },
+        )
+      }
     }
 
     const { data: membership } = await supabase
