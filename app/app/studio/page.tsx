@@ -4,11 +4,15 @@
 import { requireActiveMembership } from '@/lib/auth-helpers'
 import { createClient } from '@/lib/supabase-server'
 import Link from 'next/link'
-import { Video, ImageIcon, ArrowUpRight, Sparkles } from 'lucide-react'
+import { Video, ImageIcon, ArrowUpRight, Sparkles, Database } from 'lucide-react'
 import { BriefForm } from './brief-form'
 
 export default async function StudioPage() {
-  await requireActiveMembership()
+  // requireActiveMembership returns the user's most-recently-approved active
+  // org — same org that BriefForm targets when generating a new prompt. The
+  // Tier-2 indicator below is scoped to THAT org so it answers the question
+  // the user actually has: "if I write a brief now, will it get Tier-2?"
+  const membership = await requireActiveMembership()
   const supabase = await createClient()
 
   const { data: blueprints, error: blueprintsError } = await supabase
@@ -75,17 +79,19 @@ export default async function StudioPage() {
     .order('created_at', { ascending: false })
     .limit(50)
 
-  // Phase 5 — training-data progress signal. count: 'exact', head: true skips
-  // the row payload entirely; RLS scopes to the user's orgs so this is a
-  // multi-org sum which is fine for the home page.
+  // Phase 5 + 6 — training-data progress signal feeds the Tier-2 indicator.
+  // Scoped to the user's active org (NOT a global sum across all their
+  // orgs). Tier-2 activation in the scorer is per-org/per-media-type — a
+  // global sum would falsely light up "Tier 2 active" for a user in two
+  // orgs where each one is individually under threshold. Source of truth
+  // for actual scorer activation is buildOutcomeContext.
   const { count: outcomeCount } = await supabase
     .from('generation_outcomes')
     .select('id', { count: 'exact', head: true })
-  // Soft threshold for Phase 6's Tier-2 scorer. The exact number is
-  // provisional — treat as UI signal only.
+    .eq('org_id', membership.org_id)
   const TIER2_THRESHOLD = 50
   const outcomeCountSafe = typeof outcomeCount === 'number' ? outcomeCount : 0
-  const remainingForTier2 = Math.max(0, TIER2_THRESHOLD - outcomeCountSafe)
+  const tier2Active = outcomeCountSafe >= TIER2_THRESHOLD
 
   return (
     <div className="p-6 lg:p-10 max-w-4xl mx-auto space-y-10">
@@ -103,29 +109,40 @@ export default async function StudioPage() {
           full structured direction (subjects, scenes, lighting, audio). Copy the
           winner into Higgsfield.
         </p>
-        {/* Training-data progress — only shown when at least one outcome
-            exists, to avoid noise for fresh orgs. */}
+        {/* Tier-2 indicator — only shown when at least one outcome exists,
+            to avoid noise for fresh orgs. Lime pill when active, neutral
+            progress pill while still under threshold. Matches the per-score
+            Tier badge styling so the two surfaces tell the same story. */}
         {outcomeCountSafe > 0 ? (
-          <p className="text-xs text-neutral-500 pt-1">
-            <span className="font-mono tabular-nums text-neutral-300">
-              {outcomeCountSafe}
-            </span>{' '}
-            performance record{outcomeCountSafe === 1 ? '' : 's'} collected
-            {remainingForTier2 > 0 ? (
-              <>
-                {' '}
-                —{' '}
-                <span className="text-neutral-400">
-                  {remainingForTier2} more to unlock Tier-2 scoring
-                </span>
-              </>
+          <div className="pt-1">
+            {tier2Active ? (
+              <span
+                className="inline-flex items-center gap-1.5 rounded-full bg-lime-400/10 border border-lime-400/30 px-2.5 py-1 text-xs text-lime-400"
+                title="Tier-2 scoring is active: the scorer is calibrating against your org’s recorded outcomes."
+              >
+                <Database className="size-3" />
+                Tier 2 active ·{' '}
+                <span className="font-mono tabular-nums">
+                  {outcomeCountSafe}
+                </span>{' '}
+                outcomes
+              </span>
             ) : (
-              <>
-                {' '}
-                — <span className="text-lime-400">Tier-2 scoring ready</span>
-              </>
+              <span
+                className="inline-flex items-center gap-1.5 rounded-full bg-neutral-900 border border-neutral-800 px-2.5 py-1 text-xs text-neutral-400"
+                title="Tier-2 scoring unlocks once you have 50 recorded outcomes — until then the scorer uses a generic rubric."
+              >
+                <Database className="size-3 text-neutral-500" />
+                <span className="font-mono tabular-nums text-neutral-300">
+                  {outcomeCountSafe}
+                </span>
+                /{TIER2_THRESHOLD} outcomes ·{' '}
+                <span className="text-neutral-500">
+                  Tier-2 unlocks at {TIER2_THRESHOLD}
+                </span>
+              </span>
             )}
-          </p>
+          </div>
         ) : null}
       </div>
 

@@ -6,7 +6,13 @@
 // the surrounding variant card.
 
 import { useId, useState } from 'react'
-import { ChevronRight, Sparkles, AlertTriangle, CheckCircle2 } from 'lucide-react'
+import {
+  ChevronRight,
+  Sparkles,
+  AlertTriangle,
+  CheckCircle2,
+  Database,
+} from 'lucide-react'
 import { AttentionCurve } from './attention-curve'
 
 interface FactorData {
@@ -24,6 +30,10 @@ interface ScorePanelProps {
   enhancementPossible: boolean
   attentionCurve: Array<{ second: number; retention: number }> | null
   mediaType: 'video' | 'image'
+  /** 1 = generic Tier-1 rubric; 2 = Tier-2 calibrated against this org's
+   *  historical outcomes. Old rows pre-Phase-6 with no tier value default
+   *  to 1 in the caller. */
+  tier: 1 | 2
 }
 
 // Unified threshold bands — both the text color and the bar fill use the same
@@ -48,6 +58,7 @@ export function ScorePanel({
   enhancementPossible,
   attentionCurve,
   mediaType,
+  tier,
 }: ScorePanelProps) {
   const [showFixes, setShowFixes] = useState(false)
   const fixesListId = useId()
@@ -73,6 +84,26 @@ export function ScorePanel({
           <div className="flex items-center gap-2 text-xs uppercase tracking-wider text-neutral-500 mb-1">
             <Sparkles className="size-3" />
             <span>Viral score</span>
+            {/* Tier badge — lime when retrieval-grounded against this org's
+                outcomes (Tier 2), neutral when scored on the generic rubric
+                (Tier 1). Sits between the eyebrow label and the "Already
+                strong" pill so the user can read scoring provenance at a
+                glance. */}
+            <span
+              className={
+                tier === 2
+                  ? 'inline-flex items-center gap-1 rounded-full bg-lime-400/10 border border-lime-400/30 px-2 py-0.5 text-[10px] text-lime-400 normal-case tracking-normal'
+                  : 'inline-flex items-center gap-1 rounded-full bg-neutral-900 border border-neutral-800 px-2 py-0.5 text-[10px] text-neutral-500 normal-case tracking-normal'
+              }
+              title={
+                tier === 2
+                  ? 'Tier 2 — calibrated against your org’s recorded outcomes'
+                  : 'Tier 1 — generic rubric (Tier 2 unlocks at 50 recorded outcomes)'
+              }
+            >
+              <Database className="size-3" />
+              {tier === 2 ? 'Tier 2 · your data' : 'Tier 1 · generic'}
+            </span>
             {!enhancementPossible ? (
               <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-lime-400/10 border border-lime-400/30 px-2 py-0.5 text-[10px] text-lime-400 normal-case tracking-normal">
                 <CheckCircle2 className="size-3" />

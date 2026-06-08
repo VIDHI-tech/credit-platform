@@ -37,6 +37,7 @@ import {
 } from '@/lib/studio/rubric'
 import type { MediaType, PromptSchema } from '@/lib/studio/schema'
 import { can, type Role } from '@/lib/rbac'
+import { buildOutcomeContext } from '@/lib/studio/outcomes-context'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -268,14 +269,25 @@ export async function POST(req: NextRequest) {
       suggested_fixes: Array<{ factor: string; fix: string }>
       enhancement_possible: boolean
       summary: string
+      tier: number
       created_at: string
     } | null = null
     let summary = ''
     let scoringFailed = false
 
+    // Phase 6 — Tier-2 retrieval mirrors the score route. Computed outside
+    // the try block so the tier value is in scope for the partial-failure
+    // log line below. If context fetch fails, buildOutcomeContext returns
+    // tier=1 + empty block.
+    const { tier, contextBlock } = await buildOutcomeContext(
+      supabase,
+      blueprint.org_id,
+      mediaType,
+    )
+
     try {
       const rawScore = await callLLM({
-        system: scorerSystemPrompt(mediaType),
+        system: scorerSystemPrompt(mediaType, contextBlock || undefined),
         user: `PROMPT SCHEMA:\n${JSON.stringify(enhancerResult.schema, null, 2)}`,
         model: SCORER_MODEL,
         maxTokens: 8000,
@@ -365,7 +377,7 @@ export async function POST(req: NextRequest) {
         .from('virality_scores')
         .insert({
           blueprint_id: newBlueprint.id,
-          tier: 1,
+          tier,
           overall_score: overall,
           factor_breakdown: factorBreakdown,
           attention_curve: attentionCurve,
@@ -375,7 +387,7 @@ export async function POST(req: NextRequest) {
           model_version: scorerModelUsed,
         })
         .select(
-          'blueprint_id, overall_score, factor_breakdown, attention_curve, suggested_fixes, enhancement_possible, summary, created_at',
+          'blueprint_id, overall_score, factor_breakdown, attention_curve, suggested_fixes, enhancement_possible, summary, tier, created_at',
         )
         .single()
 
@@ -415,7 +427,7 @@ export async function POST(req: NextRequest) {
     // but we do want it in server logs so post-mortem of weird enhancements is
     // possible.
     console.log(
-      `[studio:enhance] blueprint ${newBlueprint.id} enhanced via ${enhanceModelUsed}, scored via ${scoreRow ? scorerModelUsed : 'NONE (scoring failed)'}`,
+      `[studio:enhance] blueprint ${newBlueprint.id} enhanced via ${enhanceModelUsed}, scored via ${scoreRow ? `${scorerModelUsed} (tier ${tier})` : 'NONE (scoring failed)'}`,
     )
 
     return NextResponse.json({

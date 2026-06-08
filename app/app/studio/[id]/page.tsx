@@ -79,7 +79,7 @@ export default async function StudioBatchPage({ params }: PageProps) {
     ? await supabase
         .from('virality_scores')
         .select(
-          'blueprint_id, overall_score, factor_breakdown, attention_curve, suggested_fixes, enhancement_possible, summary, created_at',
+          'blueprint_id, overall_score, factor_breakdown, attention_curve, suggested_fixes, enhancement_possible, summary, tier, created_at',
         )
         .in('blueprint_id', blueprintIds)
         .order('created_at', { ascending: false })

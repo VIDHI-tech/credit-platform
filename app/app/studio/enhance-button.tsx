@@ -283,6 +283,7 @@ export function EnhanceButton({
           enhancementPossible={newScore.enhancement_possible}
           attentionCurve={newScore.attention_curve}
           mediaType={mediaType}
+          tier={newScore.tier === 2 ? 2 : 1}
         />
       ) : null}
 

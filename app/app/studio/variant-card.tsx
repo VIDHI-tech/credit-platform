@@ -46,6 +46,10 @@ export interface ScoreData {
   suggested_fixes: Array<{ factor: string; fix: string }> | null
   enhancement_possible: boolean
   summary: string | null
+  /** Phase 6 — 1 = generic rubric, 2 = retrieval-augmented. Score rows
+   *  inserted before this phase have tier=1 in the DB (DEFAULT 1); any null
+   *  that slips through is treated as 1 by the UI. */
+  tier: number | null
 }
 
 interface VariantCardProps {
@@ -287,6 +291,9 @@ export function VariantCard({
               enhancementPossible={score.enhancement_possible}
               attentionCurve={score.attention_curve}
               mediaType={mediaType}
+              // Coerce: pre-Phase-6 rows or anything that comes through as
+              // something other than 2 falls back to Tier 1 in the UI.
+              tier={score.tier === 2 ? 2 : 1}
             />
             <EnhanceButton
               blueprintId={blueprintId}

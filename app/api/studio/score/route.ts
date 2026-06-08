@@ -32,6 +32,7 @@ import {
 } from '@/lib/studio/rubric'
 import type { MediaType } from '@/lib/studio/schema'
 import { can, type Role } from '@/lib/rbac'
+import { buildOutcomeContext } from '@/lib/studio/outcomes-context'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -110,17 +111,22 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Not permitted' }, { status: 403 })
     }
 
-    // Idempotency: if there's already a tier-1 score, return it. Saves an
-    // LLM call and prevents the duplicate-row pattern (two tabs, retry,
-    // dev Strict Mode). The unique index on (blueprint_id) WHERE tier=1
-    // is the backstop if two requests race past this check.
+    // Idempotency: if there's already ANY score row for this blueprint,
+    // return it. Saves an LLM call and prevents the duplicate-row pattern
+    // (two tabs, retry, dev Strict Mode). The unique index on
+    // (blueprint_id) WHERE tier=1 backstops Tier-1 races; for Tier-2 the
+    // existence check is the only dedup (acceptable because the auto-fetch
+    // on the variant card runs once per page load).
+    //
+    // Phase 6 — dropped `.eq('tier', 1)`. With Tier-2 scores landing in the
+    // same table, restricting to tier=1 would have re-called the LLM on
+    // every page reload of a Tier-2-scored blueprint.
     const { data: existing } = await supabase
       .from('virality_scores')
       .select(
-        'blueprint_id, overall_score, factor_breakdown, attention_curve, suggested_fixes, enhancement_possible, summary, created_at',
+        'blueprint_id, overall_score, factor_breakdown, attention_curve, suggested_fixes, enhancement_possible, summary, tier, created_at',
       )
       .eq('blueprint_id', blueprintId)
-      .eq('tier', 1)
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle()
@@ -134,11 +140,20 @@ export async function POST(req: NextRequest) {
     const mediaType = blueprint.media_type as MediaType
     const rubric = mediaType === 'video' ? VIDEO_RUBRIC : IMAGE_RUBRIC
 
+    // Phase 6 — retrieval-augmented context. Activates Tier 2 once the org
+    // has ≥50 outcomes for this media_type; otherwise tier=1 + empty block
+    // (Tier-1 behaviour unchanged).
+    const { tier, contextBlock } = await buildOutcomeContext(
+      supabase,
+      blueprint.org_id,
+      mediaType,
+    )
+
     // Track the actual model used. callLLM falls back to gpt-4o-mini on
     // 5xx/429 of the primary; recording SCORER_MODEL directly would lie.
     let modelUsed = SCORER_MODEL
     const rawText = await callLLM({
-      system: scorerSystemPrompt(mediaType),
+      system: scorerSystemPrompt(mediaType, contextBlock || undefined),
       user: `PROMPT SCHEMA:\n${JSON.stringify(blueprint.schema_json, null, 2)}`,
       model: SCORER_MODEL,
       // 8 000 output tokens: 7 factor notes + attention curve (up to 600 pts)
@@ -231,7 +246,7 @@ export async function POST(req: NextRequest) {
       .from('virality_scores')
       .insert({
         blueprint_id: blueprintId,
-        tier: 1,
+        tier,
         overall_score: overall,
         factor_breakdown: factorBreakdown,
         attention_curve: attentionCurve,
@@ -241,22 +256,22 @@ export async function POST(req: NextRequest) {
         model_version: modelUsed,
       })
       .select(
-        'blueprint_id, overall_score, factor_breakdown, attention_curve, suggested_fixes, enhancement_possible, summary, created_at',
+        'blueprint_id, overall_score, factor_breakdown, attention_curve, suggested_fixes, enhancement_possible, summary, tier, created_at',
       )
       .single()
 
     if (error) {
       // 23505 = unique_violation. Two concurrent scorers raced past the
-      // existence check; re-read the row the other one inserted and return
-      // that, so the loser still gets a sane response instead of a 500.
+      // existence check on a Tier-1 insert (the partial unique index covers
+      // tier=1 only). Re-read the row the other one inserted — match on
+      // blueprint_id regardless of tier so the loser still gets the response.
       if (error.code === '23505') {
         const { data: raced } = await supabase
           .from('virality_scores')
           .select(
-            'blueprint_id, overall_score, factor_breakdown, attention_curve, suggested_fixes, enhancement_possible, summary, created_at',
+            'blueprint_id, overall_score, factor_breakdown, attention_curve, suggested_fixes, enhancement_possible, summary, tier, created_at',
           )
           .eq('blueprint_id', blueprintId)
-          .eq('tier', 1)
           .order('created_at', { ascending: false })
           .limit(1)
           .maybeSingle()

@@ -87,8 +87,17 @@ Output ONLY valid JSON. No markdown, no code fences, no commentary. Exact shape:
  * + a summary + a list of fixes. The OVERALL score is always computed
  * server-side via computeOverall() — if the model emits an "overall" field,
  * the route ignores it.
+ *
+ * Phase 6 — optional `contextBlock`: when provided (Tier 2), it's injected
+ * as a HISTORICAL CONTEXT section between the factor spec and the output
+ * shape. The model is instructed to calibrate against the org's own outcome
+ * history rather than score on a generic rubric. Omit the second arg for
+ * Tier-1 (generic) behaviour — output shape stays identical either way.
  */
-export function scorerSystemPrompt(mediaType: MediaType): string {
+export function scorerSystemPrompt(
+  mediaType: MediaType,
+  contextBlock?: string,
+): string {
   const rubric = mediaType === 'video' ? VIDEO_RUBRIC : IMAGE_RUBRIC
   const factorSpec = rubric
     .map((f) => `  "${f.key}" (weight ${f.weight}%): ${f.description}`)
@@ -99,15 +108,25 @@ export function scorerSystemPrompt(mediaType: MediaType): string {
       ? `\n"attention_curve": array of { "second": integer, "retention": integer (0-100) } — one entry per second for the full duration of the video. Predicted retention curve: stays high during engaging moments; drops at boring or confusing beats. Start at 100 and end wherever the predicted attention lands.\n`
       : `\n"attention_curve": null (no attention curve for images)\n`
 
+  // Tier 2 — retrieval-augmented calibration block. When empty the prompt
+  // collapses to the original Tier-1 shape (no dangling header).
+  const historySection = contextBlock
+    ? `\n\nHISTORICAL CONTEXT — USE THIS TO CALIBRATE:\n${contextBlock}\n`
+    : ''
+
+  const summaryDirective = contextBlock
+    ? '"summary": one paragraph verdict on overall viral potential — reference which historical pattern(s) the planned prompt matches and why that supports your scores.'
+    : '"summary": one paragraph verdict on overall viral potential, what works, what doesn\'t.'
+
   return `You are a viral content strategist with deep expertise in short-form ${mediaType} performance on TikTok, Reels, and Shorts.
 
 Evaluate the provided prompt schema against these weighted factors:
 ${factorSpec}
 
 For each factor, assign a score from 0 to 100 based on how well the planned content fulfills it. Be specific and honest — a generic brief deserves a low score. Do not grade on a curve.
-${curveNote}
+${curveNote}${historySection}
 Also provide:
-- "summary": one paragraph verdict on overall viral potential, what works, what doesn't.
+- ${summaryDirective}
 - "fixes": array of { "factor": <factor key>, "fix": <specific actionable change to the prompt> } — only include fixes for factors that meaningfully drag the score down. Each fix must be concrete (name the scene, the line, the lighting choice to change) — not a platitude.
 
 Output ONLY valid JSON, no markdown, no preamble. Exact shape:
