@@ -32,13 +32,22 @@ interface LLMCallOpts {
   maxTokens?: number
   /** Force the model to return strict JSON (native Gemini JSON mode). */
   jsonMode?: boolean
+  /**
+   * Called once with the model that actually produced the successful
+   * response. Use this to persist a truthful `model_version` when the
+   * fallback runs — callers that record the requested model instead would
+   * silently attribute fallback output to the primary.
+   */
+  onModelUsed?: (model: string) => void
 }
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 
 async function callOnce(
   apiKey: string,
-  opts: Required<Omit<LLMCallOpts, 'jsonMode'>> & { jsonMode: boolean },
+  opts: Required<Omit<LLMCallOpts, 'jsonMode' | 'onModelUsed'>> & {
+    jsonMode: boolean
+  },
 ): Promise<{ ok: true; text: string } | { ok: false; status: number; detail: string }> {
   const res = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${opts.model}:generateContent`,
@@ -86,6 +95,7 @@ export async function callLLM({
   model,
   maxTokens = 8000,
   jsonMode = false,
+  onModelUsed,
 }: LLMCallOpts): Promise<string> {
   const apiKey = process.env.GEMINI_API_KEY?.trim()
   if (!apiKey) {
@@ -104,7 +114,10 @@ export async function callLLM({
       const result = await callOnce(apiKey, {
         system, user, model: m, maxTokens, jsonMode,
       })
-      if (result.ok) return result.text
+      if (result.ok) {
+        onModelUsed?.(m)
+        return result.text
+      }
 
       lastErr = `Gemini API ${result.status} on ${m}: ${result.detail}`
 

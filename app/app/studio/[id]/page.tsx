@@ -6,7 +6,7 @@ import { createClient } from '@/lib/supabase-server'
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { ArrowLeft, Video, ImageIcon } from 'lucide-react'
-import { VariantCard } from '../variant-card'
+import { VariantCard, type ScoreData } from '../variant-card'
 import type { PromptSchema } from '@/lib/studio/schema'
 
 interface PageProps { params: Promise<{ id: string }> }
@@ -27,6 +27,32 @@ export default async function StudioBatchPage({ params }: PageProps) {
   }
 
   if (!blueprints || blueprints.length === 0) notFound()
+
+  // Fetch existing scores for these blueprints. The DESC ordering means the
+  // first row per blueprint_id seen is the LATEST score — that's what we
+  // surface (older scores stay in the table for the learning loop in Phase 6).
+  const blueprintIds = blueprints.map((b) => b.id)
+  const { data: scoreRows, error: scoresError } = blueprintIds.length
+    ? await supabase
+        .from('virality_scores')
+        .select(
+          'blueprint_id, overall_score, factor_breakdown, attention_curve, suggested_fixes, enhancement_possible, summary, created_at',
+        )
+        .in('blueprint_id', blueprintIds)
+        .order('created_at', { ascending: false })
+    : { data: [], error: null }
+
+  if (scoresError) {
+    console.error('[studio:batch] scores query failed:', scoresError.message)
+  }
+
+  const scoreMap = new Map<string, ScoreData>()
+  ;(scoreRows ?? []).forEach((s) => {
+    if (!scoreMap.has(s.blueprint_id)) {
+      // Cast: Supabase types JSONB cols as Json; we control the insert shape.
+      scoreMap.set(s.blueprint_id, s as unknown as ScoreData)
+    }
+  })
 
   const brief = blueprints[0].brief
   const mediaType = blueprints[0].media_type as 'video' | 'image'
@@ -65,9 +91,12 @@ export default async function StudioBatchPage({ params }: PageProps) {
           <VariantCard
             key={b.id}
             index={i + 1}
+            blueprintId={b.id}
             label={b.variant_label || `Variant ${i + 1}`}
             renderedPrompt={b.rendered_prompt}
             schema={b.schema_json as PromptSchema}
+            mediaType={b.media_type as 'video' | 'image'}
+            score={scoreMap.get(b.id) ?? null}
           />
         ))}
       </div>

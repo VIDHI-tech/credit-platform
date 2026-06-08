@@ -1,7 +1,8 @@
-// lib/studio/system-prompts.ts — Architect system prompt (Phase 1).
-// Scorer / Enhancer prompts arrive in Phases 2 / 3.
+// lib/studio/system-prompts.ts — Architect (Phase 1) + Scorer (Phase 2)
+// system prompts. Enhancer prompt arrives in Phase 3.
 
 import type { MediaType } from './schema'
+import { VIDEO_RUBRIC, IMAGE_RUBRIC } from './rubric'
 
 const VIDEO_SCHEMA_SPEC = `
 Return JSON matching this VIDEO schema for each variant's "schema":
@@ -75,4 +76,49 @@ ${spec}
 Output ONLY valid JSON. No markdown, no code fences, no commentary. Exact shape:
 { "variants": [ { "variant_label": string, "schema": <schema above> }, ... ] }
 "variant_label" is a short distinguishing name like "Hook A — product-first" or "Deadpan POV".`
+}
+
+// ---------------------------------------------------------------------------
+// PHASE 2 — SCORER
+// ---------------------------------------------------------------------------
+
+/**
+ * System prompt for the virality scorer. The model returns per-factor scores
+ * + a summary + a list of fixes. The OVERALL score is always computed
+ * server-side via computeOverall() — if the model emits an "overall" field,
+ * the route ignores it.
+ */
+export function scorerSystemPrompt(mediaType: MediaType): string {
+  const rubric = mediaType === 'video' ? VIDEO_RUBRIC : IMAGE_RUBRIC
+  const factorSpec = rubric
+    .map((f) => `  "${f.key}" (weight ${f.weight}%): ${f.description}`)
+    .join('\n')
+
+  const curveNote =
+    mediaType === 'video'
+      ? `\n"attention_curve": array of { "second": integer, "retention": integer (0-100) } — one entry per second for the full duration of the video. Predicted retention curve: stays high during engaging moments; drops at boring or confusing beats. Start at 100 and end wherever the predicted attention lands.\n`
+      : `\n"attention_curve": null (no attention curve for images)\n`
+
+  return `You are a viral content strategist with deep expertise in short-form ${mediaType} performance on TikTok, Reels, and Shorts.
+
+Evaluate the provided prompt schema against these weighted factors:
+${factorSpec}
+
+For each factor, assign a score from 0 to 100 based on how well the planned content fulfills it. Be specific and honest — a generic brief deserves a low score. Do not grade on a curve.
+${curveNote}
+Also provide:
+- "summary": one paragraph verdict on overall viral potential, what works, what doesn't.
+- "fixes": array of { "factor": <factor key>, "fix": <specific actionable change to the prompt> } — only include fixes for factors that meaningfully drag the score down. Each fix must be concrete (name the scene, the line, the lighting choice to change) — not a platitude.
+
+Output ONLY valid JSON, no markdown, no preamble. Exact shape:
+{
+  "factors": {
+    "<factor_key>": { "score": <integer 0-100>, "note": "<one sentence explaining the score>" }
+  },
+  "attention_curve": <array or null per the spec above>,
+  "summary": "<paragraph>",
+  "fixes": [ { "factor": "<factor key>", "fix": "<specific actionable change>" } ]
+}
+
+Do NOT include an "overall" field — the server computes that. Scores must be integers in 0–100. Use every factor key listed above; never invent new ones.`
 }
