@@ -22,6 +22,13 @@ import { Check, Copy, ChevronRight, Loader2, RotateCw } from 'lucide-react'
 import type { PromptSchema } from '@/lib/studio/schema'
 import { ScorePanel } from './score-panel'
 import { EnhanceButton } from './enhance-button'
+import { AttachToWork } from './attach-to-work'
+import { DeleteBlueprint } from './delete-blueprint'
+
+export interface WorkOption {
+  id: string
+  label: string
+}
 
 interface FactorData {
   score: number
@@ -48,6 +55,11 @@ interface VariantCardProps {
   schema: PromptSchema
   mediaType: 'video' | 'image'
   score: ScoreData | null
+  // Phase 4 — attach + delete affordances
+  currentWorkId: string | null
+  works: WorkOption[]
+  canDelete: boolean
+  totalInBatch: number
 }
 
 function badgeScoreColor(n: number): string {
@@ -92,6 +104,10 @@ export function VariantCard({
   schema,
   mediaType,
   score: initialScore,
+  currentWorkId,
+  works,
+  canDelete,
+  totalInBatch,
 }: VariantCardProps) {
   const [copied, setCopied] = useState(false)
   const [copyError, setCopyError] = useState(false)
@@ -237,6 +253,23 @@ export function VariantCard({
           <span role="status" aria-live="polite" className="sr-only">
             {copied ? 'Prompt copied to clipboard' : copyError ? 'Copy failed. Please select and copy the text manually.' : ''}
           </span>
+        </div>
+
+        {/* META ROW — attach to work + delete. Sits between title and score
+            panel so the title row stays clean / truncate-safe. */}
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <AttachToWork
+            blueprintId={blueprintId}
+            currentWorkId={currentWorkId}
+            works={works}
+          />
+          {canDelete ? (
+            <DeleteBlueprint
+              blueprintId={blueprintId}
+              totalInBatch={totalInBatch}
+              variantLabel={label}
+            />
+          ) : null}
         </div>
 
         {/* SCORE PANEL / SKELETON / ERROR */}

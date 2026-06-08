@@ -21,6 +21,46 @@ export default async function StudioPage() {
     console.error('[studio] prompt_blueprints query failed:', blueprintsError.message)
   }
 
+  // Phase 4: best score per batch. Fetched against ALL blueprints (not just
+  // the deduped batch list) because each batch has multiple variants and the
+  // best score may live on a sibling. RLS gates this by org membership.
+  const allBlueprintIds = (blueprints ?? []).map((b) => b.id)
+  const { data: allScores } = allBlueprintIds.length
+    ? await supabase
+        .from('virality_scores')
+        .select('blueprint_id, overall_score')
+        .in('blueprint_id', allBlueprintIds)
+    : { data: [] as Array<{ blueprint_id: string; overall_score: number }> }
+
+  // blueprint_id → score; one row per blueprint (the partial unique index on
+  // tier=1 guarantees that), so we don't need to pick a "best".
+  const scoreByBlueprint = new Map<string, number>()
+  ;(allScores ?? []).forEach((s) => {
+    scoreByBlueprint.set(s.blueprint_id, Number(s.overall_score))
+  })
+
+  // Compute the BEST score across a batch's variants + the variant count.
+  // The DESC ordering above means we iterate newest-first, but for aggregation
+  // order doesn't matter.
+  const batchMeta = new Map<
+    string,
+    { count: number; bestScore: number | null }
+  >()
+  ;(blueprints ?? []).forEach((b) => {
+    const existing = batchMeta.get(b.batch_id) ?? {
+      count: 0,
+      bestScore: null,
+    }
+    const s = scoreByBlueprint.get(b.id) ?? null
+    batchMeta.set(b.batch_id, {
+      count: existing.count + 1,
+      bestScore:
+        s !== null && (existing.bestScore === null || s > existing.bestScore)
+          ? s
+          : existing.bestScore,
+    })
+  })
+
   // Dedup depends on the DESC order above: the FIRST row per batch is newest.
   const seen = new Set<string>()
   const batches = (blueprints ?? []).filter((b) => {
@@ -78,6 +118,27 @@ export default async function StudioPage() {
           <ul className="divide-y divide-neutral-900">
             {batches.map((b) => {
               const Icon = b.media_type === 'image' ? ImageIcon : Video
+              const meta = batchMeta.get(b.batch_id) ?? {
+                count: 1,
+                bestScore: null,
+              }
+              // Number.isFinite guards against any degenerate NaN/Infinity
+              // slipping through Number(s.overall_score) — the column is NUMERIC
+              // NOT NULL so it shouldn't happen, but a malformed cast would
+              // currently render "NaN" in the chip.
+              const best =
+                meta.bestScore !== null && Number.isFinite(meta.bestScore)
+                  ? meta.bestScore
+                  : null
+              // Same threshold bands as ScorePanel for visual consistency.
+              const scoreCls =
+                best === null
+                  ? 'text-neutral-600'
+                  : best >= 80
+                    ? 'text-lime-400'
+                    : best >= 60
+                      ? 'text-amber-400'
+                      : 'text-red-400'
               return (
                 <li key={b.batch_id}>
                   <Link
@@ -93,12 +154,21 @@ export default async function StudioPage() {
                       </p>
                       <p className="text-xs text-neutral-500 mt-0.5 capitalize">
                         {b.media_type} ·{' '}
+                        {meta.count} variant{meta.count === 1 ? '' : 's'} ·{' '}
                         {new Date(b.created_at).toLocaleDateString('en-US', {
                           month: 'short',
                           day: 'numeric',
                         })}
                       </p>
                     </div>
+                    {best !== null ? (
+                      <span
+                        className={`text-sm font-bold font-mono tabular-nums shrink-0 ${scoreCls}`}
+                        title={`Best score in batch: ${best.toFixed(0)}`}
+                      >
+                        {best.toFixed(0)}
+                      </span>
+                    ) : null}
                     <ArrowUpRight className="size-4 text-neutral-600 group-hover:text-lime-400 transition-colors shrink-0" />
                   </Link>
                 </li>

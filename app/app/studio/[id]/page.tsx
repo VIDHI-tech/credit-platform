@@ -8,17 +8,26 @@ import Link from 'next/link'
 import { ArrowLeft, Video, ImageIcon } from 'lucide-react'
 import { VariantCard, type ScoreData } from '../variant-card'
 import type { PromptSchema } from '@/lib/studio/schema'
+import { can, type Role } from '@/lib/rbac'
 
 interface PageProps { params: Promise<{ id: string }> }
 
 export default async function StudioBatchPage({ params }: PageProps) {
-  await requireActiveMembership()
+  // requireActiveMembership returns the membership row so we don't have to
+  // re-query memberships below — and we need both user_id and role for the
+  // canDelete computation per variant.
+  const membership = await requireActiveMembership()
   const { id: batchId } = await params
   const supabase = await createClient()
 
+  // Added work_id + created_by + org_id (Phase 4) — required for the
+  // AttachToWork dropdown's current value, the canDelete ownership check, and
+  // for scoping the membership role + works list to THE BATCH'S org.
   const { data: blueprints, error: blueprintsError } = await supabase
     .from('prompt_blueprints')
-    .select('id, media_type, brief, variant_label, schema_json, rendered_prompt, created_at')
+    .select(
+      'id, media_type, brief, variant_label, schema_json, rendered_prompt, work_id, created_by, org_id, created_at',
+    )
     .eq('batch_id', batchId)
     .order('created_at', { ascending: true })
 
@@ -27,6 +36,39 @@ export default async function StudioBatchPage({ params }: PageProps) {
   }
 
   if (!blueprints || blueprints.length === 0) notFound()
+
+  // All blueprints in a batch share an org. Re-query membership scoped to
+  // THAT org so canDelete uses the right role for multi-org users.
+  // requireActiveMembership returns the user's MOST-RECENT org role, which
+  // may not match if this batch is in a different org.
+  const batchOrgId = blueprints[0].org_id as string
+  const { data: scopedMembership } = await supabase
+    .from('memberships')
+    .select('role')
+    .eq('user_id', membership.user_id)
+    .eq('org_id', batchOrgId)
+    .eq('status', 'active')
+    .maybeSingle()
+  // Fall back to the helper's role if for some reason the scoped lookup
+  // misses (shouldn't — RLS guarantees the user is a member or they'd
+  // never have seen the blueprint above).
+  const role: Role = (scopedMembership?.role ?? membership.role) as Role
+
+  // Works list scoped to the batch's org — the PATCH route validates same-org
+  // anyway, but the dropdown shouldn't even offer foreign-org works.
+  const { data: works } = await supabase
+    .from('works')
+    .select('id, title, video_type')
+    .eq('org_id', batchOrgId)
+    .order('created_at', { ascending: false })
+    .limit(100)
+
+  const workOptions = (works ?? []).map((w) => ({
+    id: w.id as string,
+    label: (w.title as string) || (w.video_type as string) || 'Untitled',
+  }))
+
+  const totalInBatch = blueprints.length
 
   // Fetch existing scores for these blueprints. The DESC ordering means the
   // first row per blueprint_id seen is the LATEST score — that's what we
@@ -87,18 +129,28 @@ export default async function StudioBatchPage({ params }: PageProps) {
 
       {/* VARIANTS — accent-stripe numbered sections */}
       <div className="space-y-6 pt-2">
-        {blueprints.map((b, i) => (
-          <VariantCard
-            key={b.id}
-            index={i + 1}
-            blueprintId={b.id}
-            label={b.variant_label || `Variant ${i + 1}`}
-            renderedPrompt={b.rendered_prompt}
-            schema={b.schema_json as PromptSchema}
-            mediaType={b.media_type as 'video' | 'image'}
-            score={scoreMap.get(b.id) ?? null}
-          />
-        ))}
+        {blueprints.map((b, i) => {
+          // canDelete: own blueprint, OR the role has studio.delete.
+          const canDelete =
+            b.created_by === membership.user_id ||
+            can(role, 'studio', 'delete')
+          return (
+            <VariantCard
+              key={b.id}
+              index={i + 1}
+              blueprintId={b.id}
+              label={b.variant_label || `Variant ${i + 1}`}
+              renderedPrompt={b.rendered_prompt}
+              schema={b.schema_json as PromptSchema}
+              mediaType={b.media_type as 'video' | 'image'}
+              score={scoreMap.get(b.id) ?? null}
+              currentWorkId={(b.work_id as string | null) ?? null}
+              works={workOptions}
+              canDelete={canDelete}
+              totalInBatch={totalInBatch}
+            />
+          )
+        })}
       </div>
     </div>
   )
