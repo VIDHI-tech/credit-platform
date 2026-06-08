@@ -75,6 +75,18 @@ export default async function StudioPage() {
     .order('created_at', { ascending: false })
     .limit(50)
 
+  // Phase 5 — training-data progress signal. count: 'exact', head: true skips
+  // the row payload entirely; RLS scopes to the user's orgs so this is a
+  // multi-org sum which is fine for the home page.
+  const { count: outcomeCount } = await supabase
+    .from('generation_outcomes')
+    .select('id', { count: 'exact', head: true })
+  // Soft threshold for Phase 6's Tier-2 scorer. The exact number is
+  // provisional — treat as UI signal only.
+  const TIER2_THRESHOLD = 50
+  const outcomeCountSafe = typeof outcomeCount === 'number' ? outcomeCount : 0
+  const remainingForTier2 = Math.max(0, TIER2_THRESHOLD - outcomeCountSafe)
+
   return (
     <div className="p-6 lg:p-10 max-w-4xl mx-auto space-y-10">
       {/* HERO */}
@@ -91,6 +103,30 @@ export default async function StudioPage() {
           full structured direction (subjects, scenes, lighting, audio). Copy the
           winner into Higgsfield.
         </p>
+        {/* Training-data progress — only shown when at least one outcome
+            exists, to avoid noise for fresh orgs. */}
+        {outcomeCountSafe > 0 ? (
+          <p className="text-xs text-neutral-500 pt-1">
+            <span className="font-mono tabular-nums text-neutral-300">
+              {outcomeCountSafe}
+            </span>{' '}
+            performance record{outcomeCountSafe === 1 ? '' : 's'} collected
+            {remainingForTier2 > 0 ? (
+              <>
+                {' '}
+                —{' '}
+                <span className="text-neutral-400">
+                  {remainingForTier2} more to unlock Tier-2 scoring
+                </span>
+              </>
+            ) : (
+              <>
+                {' '}
+                — <span className="text-lime-400">Tier-2 scoring ready</span>
+              </>
+            )}
+          </p>
+        ) : null}
       </div>
 
       {/* BRIEF FORM */}

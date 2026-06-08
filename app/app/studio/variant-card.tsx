@@ -24,6 +24,7 @@ import { ScorePanel } from './score-panel'
 import { EnhanceButton } from './enhance-button'
 import { AttachToWork } from './attach-to-work'
 import { DeleteBlueprint } from './delete-blueprint'
+import { OutcomeForm, type Outcome } from './outcome-form'
 
 export interface WorkOption {
   id: string
@@ -60,6 +61,8 @@ interface VariantCardProps {
   works: WorkOption[]
   canDelete: boolean
   totalInBatch: number
+  // Phase 5 — outcome capture (learning loop)
+  existingOutcome: Outcome | null
 }
 
 function badgeScoreColor(n: number): string {
@@ -108,6 +111,7 @@ export function VariantCard({
   works,
   canDelete,
   totalInBatch,
+  existingOutcome,
 }: VariantCardProps) {
   const [copied, setCopied] = useState(false)
   const [copyError, setCopyError] = useState(false)
@@ -345,6 +349,14 @@ export function VariantCard({
             </pre>
           ) : null}
         </div>
+
+        {/* PHASE 5 — outcome capture. Sits at the very bottom of the card so
+            the score / prompt remain the primary surfaces; recording is a
+            post-publish action. */}
+        <OutcomeForm
+          blueprintId={blueprintId}
+          existingOutcome={existingOutcome}
+        />
       </div>
     </div>
   )

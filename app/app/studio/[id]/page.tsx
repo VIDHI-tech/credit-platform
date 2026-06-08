@@ -7,6 +7,7 @@ import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { ArrowLeft, Video, ImageIcon } from 'lucide-react'
 import { VariantCard, type ScoreData } from '../variant-card'
+import type { Outcome } from '../outcome-form'
 import type { PromptSchema } from '@/lib/studio/schema'
 import { can, type Role } from '@/lib/rbac'
 
@@ -96,6 +97,34 @@ export default async function StudioBatchPage({ params }: PageProps) {
     }
   })
 
+  // Phase 5 — outcomes per blueprint. Latest-first; we keep the FIRST row seen
+  // per blueprint_id, which is the latest. Older edits stay in the table as
+  // history (PATCH updates updated_at and we sort by recorded_at DESC for
+  // determinism — the row id never changes across edits).
+  const { data: outcomeRows, error: outcomesError } = blueprintIds.length
+    ? await supabase
+        .from('generation_outcomes')
+        .select(
+          'id, blueprint_id, platform, published_url, published_at, views, watch_time_avg_seconds, shares, saves, comments, likes, went_viral',
+        )
+        .in('blueprint_id', blueprintIds)
+        .order('recorded_at', { ascending: false })
+    : { data: [] as Array<Outcome & { blueprint_id: string }>, error: null }
+
+  if (outcomesError) {
+    console.error(
+      '[studio:batch] outcomes query failed:',
+      outcomesError.message,
+    )
+  }
+
+  const outcomeMap = new Map<string, Outcome>()
+  ;(outcomeRows ?? []).forEach((o) => {
+    if (!outcomeMap.has(o.blueprint_id as string)) {
+      outcomeMap.set(o.blueprint_id as string, o as unknown as Outcome)
+    }
+  })
+
   const brief = blueprints[0].brief
   const mediaType = blueprints[0].media_type as 'video' | 'image'
   const MediaIcon = mediaType === 'image' ? ImageIcon : Video
@@ -148,6 +177,7 @@ export default async function StudioBatchPage({ params }: PageProps) {
               works={workOptions}
               canDelete={canDelete}
               totalInBatch={totalInBatch}
+              existingOutcome={outcomeMap.get(b.id) ?? null}
             />
           )
         })}
