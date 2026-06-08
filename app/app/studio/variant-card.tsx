@@ -93,6 +93,7 @@ export function VariantCard({
   score: initialScore,
 }: VariantCardProps) {
   const [copied, setCopied] = useState(false)
+  const [copyError, setCopyError] = useState(false)
   const [showSchema, setShowSchema] = useState(false)
   const [score, setScore] = useState<ScoreData | null>(initialScore)
   const [scoring, setScoring] = useState(false)
@@ -156,19 +157,26 @@ export function VariantCard({
   function handleRetry() {
     setScoreError(null)
     hasScoredRef.current = true
-    fetchScore()
+    // Give the retry its own AbortController so navigating away while a
+    // retry is in-flight cancels it cleanly (rather than calling setState
+    // on an unmounted component, which is a no-op in React 18+ but noisy).
+    const ctrl = new AbortController()
+    fetchScore(ctrl.signal)
   }
 
   async function handleCopy() {
     try {
       await navigator.clipboard.writeText(renderedPrompt)
       setCopied(true)
+      setCopyError(false)
       setTimeout(() => setCopied(false), 2000)
     } catch {
-      // Permission denied or insecure context — revert state and let the
-      // user know via the inline error pattern.
+      // Permission denied or insecure context. Show a transient error near
+      // the copy button — NOT in scoreError, which is reserved for scoring
+      // failures and could be silently swallowed when a score is displayed.
       setCopied(false)
-      setScoreError('Couldn’t copy to clipboard. Select the prompt and copy manually.')
+      setCopyError(true)
+      setTimeout(() => setCopyError(false), 4000)
     }
   }
 
@@ -203,21 +211,30 @@ export function VariantCard({
               </span>
             ) : null}
           </div>
-          <button
-            type="button"
-            onClick={handleCopy}
-            aria-label={copied ? 'Prompt copied' : 'Copy prompt to clipboard'}
-            className={
-              copied
-                ? 'inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium bg-lime-400 text-black transition-colors shrink-0'
-                : 'inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium bg-neutral-900 border border-neutral-800 text-neutral-300 hover:border-lime-400 hover:text-lime-400 transition-colors shrink-0'
-            }
-          >
-            {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-            {copied ? 'Copied' : 'Copy prompt'}
-          </button>
+          <div className="flex flex-col items-end gap-1 shrink-0">
+            <button
+              type="button"
+              onClick={handleCopy}
+              aria-label={copied ? 'Prompt copied' : 'Copy prompt to clipboard'}
+              className={
+                copyError
+                  ? 'inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium bg-neutral-900 border border-red-500/60 text-red-400 transition-colors'
+                  : copied
+                    ? 'inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium bg-lime-400 text-black transition-colors'
+                    : 'inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium bg-neutral-900 border border-neutral-800 text-neutral-300 hover:border-lime-400 hover:text-lime-400 transition-colors'
+              }
+            >
+              {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+              {copied ? 'Copied' : 'Copy prompt'}
+            </button>
+            {copyError ? (
+              <p className="text-[10px] text-red-400 leading-tight">
+                Copy failed — select &amp; copy manually
+              </p>
+            ) : null}
+          </div>
           <span role="status" aria-live="polite" className="sr-only">
-            {copied ? 'Prompt copied to clipboard' : ''}
+            {copied ? 'Prompt copied to clipboard' : copyError ? 'Copy failed. Please select and copy the text manually.' : ''}
           </span>
         </div>
 

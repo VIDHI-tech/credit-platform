@@ -11,7 +11,7 @@
 //   3) Re-check membership against THE BLUEPRINT'S org (not the most-recent
 //      one). RLS already gates org scope; this catches future role-dependent
 //      permissions where the wrong org would silently grant the wrong role.
-//   4) Call Gemini scorer with the blueprint's schema_json + the rubric prompt.
+//   4) Call the LLM scorer with the blueprint's schema_json + the rubric prompt.
 //   5) Compute OVERALL server-side via computeOverall() — never trust the
 //      model's overall.
 //   6) Insert one row into virality_scores. RLS gates this too.
@@ -48,7 +48,7 @@ interface ScoreResponse {
   fixes: Array<{ factor: string; fix: string }>
 }
 
-// Defensive caps for model output (string lengths + array sizes). Gemini is
+// Defensive caps for model output (string lengths + array sizes). GPT-4o is
 // usually well-behaved under JSON mode, but a runaway response shouldn't
 // inflate a JSONB row or crash the renderer.
 const MAX_NOTE_LEN = 500
@@ -141,8 +141,10 @@ export async function POST(req: NextRequest) {
       system: scorerSystemPrompt(mediaType),
       user: `PROMPT SCHEMA:\n${JSON.stringify(blueprint.schema_json, null, 2)}`,
       model: SCORER_MODEL,
-      maxTokens: 4000,
-      jsonMode: true, // Gemini guarantees parseable JSON output
+      // 8 000 output tokens: 7 factor notes + attention curve (up to 600 pts)
+      // + summary + fixes fits comfortably; 4 000 was tight for long videos.
+      maxTokens: 8000,
+      jsonMode: true, // OpenAI json_object mode guarantees parseable JSON output
       onModelUsed: (m) => {
         modelUsed = m
       },
