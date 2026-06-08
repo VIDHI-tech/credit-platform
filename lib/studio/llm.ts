@@ -1,26 +1,24 @@
 // lib/studio/llm.ts — LLM wrapper for Eigen Studio. SERVER-ONLY.
-// GEMINI_API_KEY is read here; never import this into a client component.
+// OPENAI_API_KEY is read here; never import this into a client component.
 //
-// Why Gemini: free tier with 1M context window, native JSON mode (guarantees
-// parseable JSON output), no credit card. Get a key at:
-//   https://aistudio.google.com/apikey
+// Why OpenAI: GPT-4o with native JSON mode (guarantees parseable JSON output),
+// strong creative generation + scoring quality. Get a key at:
+//   https://platform.openai.com/api-keys
 //
-// Reliability: Gemini's free tier sometimes returns 503 ("high demand") or
-// 429 (rate-limited) on the primary model. callLLM retries with exponential
-// backoff, then falls back to FALLBACK_MODEL ('gemini-2.0-flash' — same free
-// quota, less congested) so a transient overload never breaks the route.
+// Reliability: the API can return 429 (rate-limited) or 5xx transients on the
+// primary model. callLLM retries with exponential backoff, then falls back to
+// FALLBACK_MODEL ('gpt-4o-mini' — cheaper, faster) so a transient overload
+// never breaks the route.
 //
-// To swap providers (OpenRouter, Groq, Anthropic, OpenAI, etc.), only
-// callLLM() and the MODEL constants below need to change. The route handler
-// and parser stay identical.
+// To swap providers (Gemini, Anthropic, Groq, etc.), only callLLM() and the
+// MODEL constants below need to change. Route handlers and the parser stay identical.
 
-export const ARCHITECT_MODEL = 'gemini-2.5-flash'   // 1M context, free tier
-export const SCORER_MODEL = 'gemini-2.5-pro'         // Phase 2 — slower/smarter
-export const ENHANCE_MODEL = 'gemini-2.5-flash'      // Phase 3
-const FALLBACK_MODEL = 'gemini-2.0-flash'            // used on 503/429 of primary
+export const ARCHITECT_MODEL = 'gpt-4o'      // creative prompt generation
+export const SCORER_MODEL    = 'gpt-4o'      // Phase 2 — quality scoring
+export const ENHANCE_MODEL   = 'gpt-4o'      // Phase 3
+const FALLBACK_MODEL         = 'gpt-4o-mini' // used on 5xx/429 of primary
 
-// HTTP statuses worth retrying. 503 = overloaded; 429 = rate-limited;
-// 500/502/504 = transient upstream.
+// HTTP statuses worth retrying. 429 = rate-limited; 500/502/503/504 = transient.
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504])
 const MAX_ATTEMPTS_PER_MODEL = 3
 const BACKOFF_BASE_MS = 800
@@ -30,7 +28,7 @@ interface LLMCallOpts {
   user: string
   model: string
   maxTokens?: number
-  /** Force the model to return strict JSON (native Gemini JSON mode). */
+  /** Force the model to return strict JSON (OpenAI json_object mode). */
   jsonMode?: boolean
   /**
    * Called once with the model that actually produced the successful
@@ -49,41 +47,42 @@ async function callOnce(
     jsonMode: boolean
   },
 ): Promise<{ ok: true; text: string } | { ok: false; status: number; detail: string }> {
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${opts.model}:generateContent`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': apiKey,
-      },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: opts.system }] },
-        contents: [{ role: 'user', parts: [{ text: opts.user }] }],
-        generationConfig: {
-          maxOutputTokens: opts.maxTokens,
-          temperature: 0.9,
-          ...(opts.jsonMode ? { responseMimeType: 'application/json' } : {}),
-        },
-      }),
+  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
     },
-  )
+    body: JSON.stringify({
+      model: opts.model,
+      messages: [
+        { role: 'system', content: opts.system },
+        { role: 'user',   content: opts.user   },
+      ],
+      max_tokens: opts.maxTokens,
+      temperature: 0.9,
+      // json_object mode requires the word "json" to appear in the system
+      // prompt (both architectSystemPrompt and scorerSystemPrompt already
+      // include "Output ONLY valid JSON"), or OpenAI returns a 400.
+      ...(opts.jsonMode ? { response_format: { type: 'json_object' } } : {}),
+    }),
+  })
+
   if (!res.ok) {
     const detail = await res.text()
     return { ok: false, status: res.status, detail }
   }
+
   const data: {
-    candidates?: Array<{
-      content?: { parts?: Array<{ text?: string }> }
-      finishReason?: string
+    choices?: Array<{
+      message?: { content?: string | null }
+      finish_reason?: string
     }>
   } = await res.json()
-  const text =
-    data.candidates?.[0]?.content?.parts
-      ?.map((p) => p.text ?? '')
-      .join('') ?? ''
+
+  const text = data.choices?.[0]?.message?.content ?? ''
   if (!text) {
-    const reason = data.candidates?.[0]?.finishReason ?? 'no content'
+    const reason = data.choices?.[0]?.finish_reason ?? 'no content'
     return { ok: false, status: 502, detail: `Empty response (${reason})` }
   }
   return { ok: true, text }
@@ -97,10 +96,11 @@ export async function callLLM({
   jsonMode = false,
   onModelUsed,
 }: LLMCallOpts): Promise<string> {
-  const apiKey = process.env.GEMINI_API_KEY?.trim()
+  const apiKey = process.env.OPENAI_API_KEY?.trim()
   if (!apiKey) {
     throw new Error(
-      'GEMINI_API_KEY is not configured. Add it to .env.local and restart. Get a free key at https://aistudio.google.com/apikey',
+      'OPENAI_API_KEY is not configured. Add it to .env.local and restart. ' +
+      'Get a key at https://platform.openai.com/api-keys',
     )
   }
 
@@ -119,7 +119,7 @@ export async function callLLM({
         return result.text
       }
 
-      lastErr = `Gemini API ${result.status} on ${m}: ${result.detail}`
+      lastErr = `OpenAI API ${result.status} on ${m}: ${result.detail}`
 
       // Non-retryable: surface immediately (auth errors, bad request, etc.).
       if (!RETRYABLE_STATUSES.has(result.status)) {
@@ -129,8 +129,8 @@ export async function callLLM({
       // Last attempt for this model → break out so we move to the fallback.
       if (attempt === MAX_ATTEMPTS_PER_MODEL - 1) break
 
-      // Exponential backoff with jitter (deterministic seed by attempt so
-      // tests stay reproducible — no Math.random).
+      // Exponential backoff (deterministic seed by attempt so tests stay
+      // reproducible — no Math.random).
       const delay = BACKOFF_BASE_MS * 2 ** attempt
       console.warn(
         `[studio] ${m} returned ${result.status}; retrying in ${delay}ms (attempt ${attempt + 2}/${MAX_ATTEMPTS_PER_MODEL})`,
@@ -147,7 +147,7 @@ export async function callLLM({
   )
 }
 
-/** Strip markdown fences (Gemini's JSON mode rarely emits them, but defensive). */
+/** Strip markdown fences (rare under JSON mode, but defensive). */
 export function parseLLMJson<T>(raw: string): T {
   let s = raw.trim()
   if (s.startsWith('```')) {

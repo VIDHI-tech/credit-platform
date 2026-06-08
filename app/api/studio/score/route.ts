@@ -17,8 +17,8 @@
 //   6) Insert one row into virality_scores. RLS gates this too.
 //
 // Note: the plan's snippet imported callClaude/parseClaudeJson from
-// '@/lib/studio/claude'. The actual wrapper was renamed to llm.ts in Phase 1
-// (Gemini swap). This route uses the current names.
+// '@/lib/studio/claude'. The actual wrapper is llm.ts (OpenAI). This route
+// uses the current names.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
@@ -110,8 +110,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Not permitted' }, { status: 403 })
     }
 
-    // Idempotency: if there's already a tier-1 score, return it. Saves a
-    // Gemini call and prevents the duplicate-row pattern (two tabs, retry,
+    // Idempotency: if there's already a tier-1 score, return it. Saves an
+    // LLM call and prevents the duplicate-row pattern (two tabs, retry,
     // dev Strict Mode). The unique index on (blueprint_id) WHERE tier=1
     // is the backstop if two requests race past this check.
     const { data: existing } = await supabase
@@ -134,8 +134,8 @@ export async function POST(req: NextRequest) {
     const mediaType = blueprint.media_type as MediaType
     const rubric = mediaType === 'video' ? VIDEO_RUBRIC : IMAGE_RUBRIC
 
-    // Track the actual model used. callLLM falls back to gemini-2.0-flash on
-    // 503/429 of the primary; recording SCORER_MODEL directly would lie.
+    // Track the actual model used. callLLM falls back to gpt-4o-mini on
+    // 5xx/429 of the primary; recording SCORER_MODEL directly would lie.
     let modelUsed = SCORER_MODEL
     const rawText = await callLLM({
       system: scorerSystemPrompt(mediaType),

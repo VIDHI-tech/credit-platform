@@ -63,8 +63,8 @@ export async function POST(req: NextRequest) {
       system: architectSystemPrompt(body.mediaType),
       user: userMsg,
       model: ARCHITECT_MODEL,
-      maxTokens: 16000, // 3 variants × large video schema can hit ~10-12k tokens; 8k was truncating
-      jsonMode: true,   // Gemini guarantees parseable JSON output
+      maxTokens: 16000, // 2 variants × large video schema can hit ~10-12k tokens; 8k was truncating
+      jsonMode: true,   // OpenAI json_object mode guarantees parseable JSON output
     })
 
     const parsed = parseLLMJson<{ variants: GeneratedVariant[] }>(raw)
