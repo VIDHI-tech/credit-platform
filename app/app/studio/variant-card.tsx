@@ -21,6 +21,7 @@ import { useState, useEffect, useId, useRef, useCallback } from 'react'
 import { Check, Copy, ChevronRight, Loader2, RotateCw } from 'lucide-react'
 import type { PromptSchema } from '@/lib/studio/schema'
 import { ScorePanel } from './score-panel'
+import { EnhanceButton } from './enhance-button'
 
 interface FactorData {
   score: number
@@ -240,15 +241,22 @@ export function VariantCard({
 
         {/* SCORE PANEL / SKELETON / ERROR */}
         {score ? (
-          <ScorePanel
-            overall={score.overall_score}
-            factors={score.factor_breakdown}
-            fixes={score.suggested_fixes ?? []}
-            summary={score.summary ?? ''}
-            enhancementPossible={score.enhancement_possible}
-            attentionCurve={score.attention_curve}
-            mediaType={mediaType}
-          />
+          <>
+            <ScorePanel
+              overall={score.overall_score}
+              factors={score.factor_breakdown}
+              fixes={score.suggested_fixes ?? []}
+              summary={score.summary ?? ''}
+              enhancementPossible={score.enhancement_possible}
+              attentionCurve={score.attention_curve}
+              mediaType={mediaType}
+            />
+            <EnhanceButton
+              blueprintId={blueprintId}
+              score={score}
+              mediaType={mediaType}
+            />
+          </>
         ) : scoring ? (
           <ScoreSkeleton />
         ) : scoreError ? (

@@ -122,3 +122,44 @@ Output ONLY valid JSON, no markdown, no preamble. Exact shape:
 
 Do NOT include an "overall" field — the server computes that. Scores must be integers in 0–100. Use every factor key listed above; never invent new ones.`
 }
+
+// ---------------------------------------------------------------------------
+// PHASE 3 — ENHANCER
+// ---------------------------------------------------------------------------
+
+/**
+ * System prompt for the enhancer pass. The model receives the current schema,
+ * its factor breakdown, and a list of specific fixes — and returns either an
+ * improved schema (when changes would meaningfully lift the score) or a refusal
+ * with a reason (when the prompt is already strong on every factor).
+ *
+ * The route trusts the model's `enhancement_applied` flag for early-exit
+ * messaging, then re-scores the new schema server-side as the source of truth.
+ */
+export function enhancerSystemPrompt(mediaType: MediaType): string {
+  const spec = mediaType === 'video' ? VIDEO_SCHEMA_SPEC : IMAGE_SCHEMA_SPEC
+  return `You are a world-class creative director improving an AI ${mediaType} generation prompt based on a virality score and specific fixes.
+
+You will receive:
+1. The current prompt schema (JSON)
+2. The virality score factor breakdown with notes
+3. A list of specific fixes to apply
+
+Your job:
+- Assess honestly whether meaningful improvement is possible. If the prompt already scores strongly on every factor (≥80) and changes would be purely cosmetic, return enhancement_applied: false with a clear reason.
+- If ANY factor scores below 70, you MUST attempt enhancement — those are the levers.
+- Apply every fix listed. Strengthen each weak factor. Preserve everything that already scores well — do not change strong elements.
+- Return the full improved schema as valid JSON, matching the EXACT shape below — every required field must be present.
+- Also return change_log: an array of one-line strings, each describing one concrete change and which factor it improves. If you genuinely made no targeted changes, leave the array empty — do not invent change-log entries.
+
+Output ONLY valid JSON, no markdown, no preamble. Exact shape:
+{
+  "enhancement_applied": true | false,
+  "reason": "<if false: a one-sentence explanation of why enhancement would not help>",
+  "schema": <full improved schema matching the media_type spec below, or null if enhancement_applied is false>,
+  "change_log": ["<what changed and which factor it lifts>", ...]
+}
+
+${spec}
+`
+}
