@@ -62,7 +62,7 @@ export function architectSystemPrompt(mediaType: MediaType): string {
   const spec = mediaType === 'video' ? VIDEO_SCHEMA_SPEC : IMAGE_SCHEMA_SPEC
   return `You are a world-class creative director and prompt engineer for AI ${mediaType} generation (Higgsfield, Kling, Seedance, Veo, Nano Banana, Seedream).
 
-Given a brief, produce 2-3 DISTINCT variants. Each variant must take a genuinely different creative ANGLE and HOOK — not cosmetic rewrites of the same idea.
+Given a brief, produce exactly 2 DISTINCT variants. Each variant must take a genuinely different creative ANGLE and HOOK — not cosmetic rewrites of the same idea.
 
 Rules:
 - Bake all expression, gesture, camera, and lighting direction directly into the structured fields so the output is production-ready.

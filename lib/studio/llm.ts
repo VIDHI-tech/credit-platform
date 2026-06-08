@@ -146,6 +146,13 @@ export function parseLLMJson<T>(raw: string): T {
   try {
     return JSON.parse(s) as T
   } catch {
-    throw new Error('LLM returned a response that was not valid JSON.')
+    // Log the tail so truncation vs. malformed JSON is obvious in server logs.
+    const tail = raw.length > 500 ? `…${raw.slice(-500)}` : raw
+    console.error('[studio:parseLLMJson] raw response tail:', tail)
+    console.error('[studio:parseLLMJson] total raw length:', raw.length, 'chars')
+    throw new Error(
+      `LLM returned a response that was not valid JSON (${raw.length} chars). ` +
+      'This is usually caused by token-limit truncation — the response was cut mid-stream.',
+    )
   }
 }
