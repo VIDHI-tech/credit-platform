@@ -15,11 +15,26 @@ export default async function StudioPage() {
   const membership = await requireActiveMembership()
   const supabase = await createClient()
 
-  const { data: blueprints, error: blueprintsError } = await supabase
-    .from('prompt_blueprints')
-    .select('id, batch_id, media_type, brief, variant_label, created_at')
-    .order('created_at', { ascending: false })
-    .limit(60)
+  const [
+    { data: blueprints, error: blueprintsError },
+    { data: works },
+    { count: outcomeCount },
+  ] = await Promise.all([
+    supabase
+      .from('prompt_blueprints')
+      .select('id, batch_id, media_type, brief, variant_label, created_at')
+      .order('created_at', { ascending: false })
+      .limit(60),
+    supabase
+      .from('works')
+      .select('id, title, video_type')
+      .order('created_at', { ascending: false })
+      .limit(50),
+    supabase
+      .from('generation_outcomes')
+      .select('id', { count: 'exact', head: true })
+      .eq('org_id', membership.org_id),
+  ])
 
   if (blueprintsError) {
     console.error('[studio] prompt_blueprints query failed:', blueprintsError.message)
@@ -73,22 +88,6 @@ export default async function StudioPage() {
     return true
   })
 
-  const { data: works } = await supabase
-    .from('works')
-    .select('id, title, video_type')
-    .order('created_at', { ascending: false })
-    .limit(50)
-
-  // Phase 5 + 6 — training-data progress signal feeds the Tier-2 indicator.
-  // Scoped to the user's active org (NOT a global sum across all their
-  // orgs). Tier-2 activation in the scorer is per-org/per-media-type — a
-  // global sum would falsely light up "Tier 2 active" for a user in two
-  // orgs where each one is individually under threshold. Source of truth
-  // for actual scorer activation is buildOutcomeContext.
-  const { count: outcomeCount } = await supabase
-    .from('generation_outcomes')
-    .select('id', { count: 'exact', head: true })
-    .eq('org_id', membership.org_id)
   const TIER2_THRESHOLD = 50
   const outcomeCountSafe = typeof outcomeCount === 'number' ? outcomeCount : 0
   const tier2Active = outcomeCountSafe >= TIER2_THRESHOLD

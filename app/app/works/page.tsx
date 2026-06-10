@@ -23,12 +23,15 @@ export default async function WorksPage({ searchParams }: PageProps) {
   const { status: filterStatus } = await searchParams;
   const supabase = await createClient();
 
-  const { data: works } = await supabase
-    .from("works")
-    .select(
-      "id, title, video_type, status, start_date, end_date, end_time, max_credits, creator_id, client_id",
-    )
-    .order("created_at", { ascending: false });
+  const [{ data: works }, { data: allClients }] = await Promise.all([
+    supabase
+      .from("works")
+      .select(
+        "id, title, video_type, status, start_date, end_date, end_time, max_credits, creator_id, client_id",
+      )
+      .order("created_at", { ascending: false }),
+    supabase.from("clients").select("id, name, status").order("name"),
+  ]);
 
   const counts: Record<WorkStatus | "all", number> = {
     all: works?.length || 0,
@@ -53,10 +56,6 @@ export default async function WorksPage({ searchParams }: PageProps) {
   // Full client roster for the calendar "+" picker (all statuses for name
   // lookup; we tag canCreateWork separately so the UI can grey out ineligible).
   const canCreateWork = can(membership.role, "works", "create");
-  const { data: allClients } = await supabase
-    .from("clients")
-    .select("id, name, status")
-    .order("name");
   const calendarClients = (allClients || []).map((c) => ({
     id: c.id,
     name: c.name,
@@ -64,17 +63,10 @@ export default async function WorksPage({ searchParams }: PageProps) {
       canCreateWork && WORK_ALLOWED_CLIENT_STATUSES.includes(c.status),
   }));
 
-  // Pre-fetch work_creators for all visible works so the cards can show
-  // every co-owner without N+1.
   const [
-    { data: clients },
     { data: workCredits },
     { data: workCreators },
   ] = await Promise.all([
-    supabase
-      .from("clients")
-      .select("id, name, status")
-      .in("id", clientIds.length ? clientIds : [PLACEHOLDER]),
     supabase
       .from("generations")
       .select("work_id, credits")
@@ -98,10 +90,8 @@ export default async function WorksPage({ searchParams }: PageProps) {
     .in("user_id", creatorIds.length ? creatorIds : [PLACEHOLDER]);
 
   const clientNameMap: Record<string, string> = {};
-  // Section 1 — Client→Work cascade lock. WorksView reads this map to
-  // decide which works render a lock badge (calendar) / amber chip (cards).
   const clientStatusMap: Record<string, string> = {};
-  (clients || []).forEach((c) => {
+  (allClients || []).forEach((c) => {
     clientNameMap[c.id] = c.name;
     clientStatusMap[c.id] = c.status;
   });

@@ -1,7 +1,3 @@
-// app/app/clients/[id]/page.tsx — client detail: credit summary, works,
-// per-work per-user report, assigned + wastage tables.
-// Supports ?range=week|month|year — server-side date floor on the
-// generations query so every aggregated number on the page respects it.
 import { requireActiveMembership } from "@/lib/auth-helpers";
 import { createClient } from "@/lib/supabase-server";
 import { can } from "@/lib/rbac";
@@ -24,18 +20,13 @@ import { EditClientButton } from "./edit-client-button";
 import { DeleteClientButton } from "./delete-client-button";
 import { CreateWorkButton } from "./create-work-button";
 import { ClientGenerationsTables } from "./client-generations-tables";
-import {
-  ClientTimeFilter,
-  type ClientRange,
-} from "./client-time-filter";
+import { ClientTimeFilter, type ClientRange } from "./client-time-filter";
 import {
   WorkUserReport,
   type WorkReportRow,
   type WorkUserStat,
 } from "./work-user-report";
 
-// Clients in these statuses can have new works created against them.
-// Outreach/paused/ended cannot — that's the user-facing rule on this page.
 const WORK_ALLOWED_STATUSES: ClientStatus[] = ["trial", "ongoing", "in_talk"];
 
 const RANGE_DAYS: Record<ClientRange, number | null> = {
@@ -72,10 +63,6 @@ export default async function ClientDetailPage({
     ? (rawRange as ClientRange)
     : "all";
 
-  // ?wstatus= filters the Works list. "all" (or anything unrecognized) shows
-  // every work. The filter ONLY narrows the rendered list — credit totals,
-  // per-work per-user report, and assigned/wastage tables stay full-scope
-  // because they roll up generations, not works.
   const workStatusFilter: WorkStatus | "all" = WORK_STATUSES.includes(
     sp.wstatus as WorkStatus,
   )
@@ -95,7 +82,6 @@ export default async function ClientDetailPage({
 
   if (!client) notFound();
 
-  // Generations for this client, scoped by the time filter (when set).
   let generationsQuery = supabase
     .from("generations")
     .select(
@@ -106,17 +92,17 @@ export default async function ClientDetailPage({
   if (fromIso) {
     generationsQuery = generationsQuery.gte("hf_created_at", fromIso);
   }
-  const { data: generations } = await generationsQuery;
+  const [{ data: generations }, { data: works }] = await Promise.all([
+    generationsQuery,
+    supabase
+      .from("works")
+      .select(
+        "id, title, video_type, status, end_date, max_credits, creator_id",
+      )
+      .eq("client_id", id)
+      .order("created_at", { ascending: false }),
+  ]);
 
-  // Works for this client (NOT time-filtered — we want the full list so the
-  // user can see every work even if no activity in the selected range).
-  const { data: works } = await supabase
-    .from("works")
-    .select("id, title, video_type, status, end_date, max_credits, creator_id")
-    .eq("client_id", id)
-    .order("created_at", { ascending: false });
-
-  // work_creators for every work on this client (multi-creator support).
   const clientWorkIds = (works || []).map((w) => w.id);
   const { data: clientWorkCreators } = clientWorkIds.length
     ? await supabase
@@ -126,7 +112,6 @@ export default async function ClientDetailPage({
         .order("added_at", { ascending: true })
     : { data: [] as { work_id: string; user_id: string; added_at: string }[] };
 
-  // Names for every user who created/co-owns a work OR assigned a generation.
   const userIds = new Set<string>();
   (works || []).forEach((w) => userIds.add(w.creator_id));
   (clientWorkCreators || []).forEach((wc) => userIds.add(wc.user_id));
@@ -147,8 +132,6 @@ export default async function ClientDetailPage({
     (users || []).map((u) => [u.user_id, u.full_name]),
   );
 
-  // creditByWork derives from the same time-filtered generations set so the
-  // per-work credit column on the Works list respects the filter.
   const creditByWork = new Map<string, number>();
   (generations || []).forEach((g) => {
     if (g.work_id) {
@@ -159,11 +142,6 @@ export default async function ClientDetailPage({
     }
   });
 
-  // Per-work, per-user breakdown. Each credit goes into EXACTLY ONE bucket:
-  //   - wastage: is_waste = true
-  //   - rework : !is_waste AND work.status === 'rework'
-  //   - actual : !is_waste AND work.status !== 'rework'
-  // So actual + wastage + rework = total credits attributed to the work.
   const workStatusMap = new Map<string, WorkStatus>();
   (works || []).forEach((w) => {
     workStatusMap.set(w.id, w.status as WorkStatus);
@@ -202,7 +180,6 @@ export default async function ClientDetailPage({
         wastage: b.wastage,
         rework: b.rework,
       }))
-      // Sort by total credits descending so the top contributor leads.
       .sort(
         (a, b) =>
           b.actual + b.wastage + b.rework - (a.actual + a.wastage + a.rework),
@@ -220,15 +197,11 @@ export default async function ClientDetailPage({
     0,
   );
 
-  // work_id → "title or video_type" for the "via {work}" hint inside the
-  // Assigned/Wastage tables below.
   const workTitles: Record<string, string> = {};
   (works || []).forEach((w) => {
     workTitles[w.id] = w.title || w.video_type || "Untitled work";
   });
 
-  // work_id → ordered creator id list (primary first), for the work row
-  // rendering below.
   const additionalCreatorsByWork = new Map<string, string[]>();
   (clientWorkCreators || []).forEach((wc) => {
     const arr = additionalCreatorsByWork.get(wc.work_id) || [];
@@ -288,8 +261,6 @@ export default async function ClientDetailPage({
         )}
       </p>
 
-      {/* TIME FILTER — drives the credit summary, per-work credits, and the
-          per-work per-user report below. */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
         <div>
           <div className="text-xs text-neutral-500 uppercase tracking-wider">
@@ -300,7 +271,6 @@ export default async function ClientDetailPage({
         <ClientTimeFilter current={range} />
       </div>
 
-      {/* CREDIT SUMMARY (within the selected range) */}
       <section className="bg-neutral-950 border border-neutral-800 rounded-lg p-6 mb-6">
         <h2 className="text-xs uppercase tracking-wider font-semibold text-neutral-400 mb-4">
           Credit usage · {RANGE_LABEL[range]}
@@ -327,154 +297,147 @@ export default async function ClientDetailPage({
         </div>
       </section>
 
-      {/* WORKS — full list, regardless of range. Create Work is gated on
-          client status (trial / ongoing / in_talk only). The status filter
-          is purely visual; it doesn't touch credit totals or the report. */}
       {(() => {
         const visibleWorks =
           workStatusFilter === "all"
             ? works || []
             : (works || []).filter((w) => w.status === workStatusFilter);
         return (
-      <section className="bg-neutral-950 border border-neutral-800 rounded-lg overflow-hidden mb-6">
-        <div className="px-4 py-3 border-b border-neutral-800 flex items-center justify-between gap-2">
-          <div>
-            <h2 className="font-semibold text-white">Works</h2>
-            <p className="text-xs text-neutral-500 mt-0.5">
-              {visibleWorks.length} of {works?.length || 0}{" "}
-              {workStatusFilter === "all"
-                ? "total"
-                : WORK_STATUS_LABELS[workStatusFilter]}
-            </p>
-            {canCreateWork && !isWorkAllowedStatus && (
-              <p className="text-xs text-neutral-500 mt-0.5">
-                Move client to{" "}
-                <span className="text-lime-400">Trial</span>,{" "}
-                <span className="text-lime-400">Ongoing</span>, or{" "}
-                <span className="text-lime-400">In Talks</span> to add a new
-                work.
-              </p>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            <WorkStatusFilter current={workStatusFilter} />
-            {showCreateWork && (
-              <CreateWorkButton
-                clientId={client.id}
-                clientName={client.name}
-              />
-            )}
-          </div>
-        </div>
-        {!works || works.length === 0 ? (
-          <div className="p-8 text-center text-neutral-500">
-            <p>No works yet for this client.</p>
-            {showCreateWork && (
-              <p className="text-sm mt-1">
-                Use + Create Work above to add one.
-              </p>
-            )}
-            {canCreateWork && !isWorkAllowedStatus && (
-              <p className="text-sm mt-1">
-                Status is{" "}
-                <span className="text-neutral-300">
-                  {CLIENT_STATUS_LABELS[status]}
-                </span>{" "}
-                — works can only be added on Trial / Ongoing / In Talks
-                clients.
-              </p>
-            )}
-          </div>
-        ) : visibleWorks.length === 0 ? (
-          <div className="p-8 text-center text-neutral-500">
-            <p>
-              No works with status{" "}
-              <span className="text-neutral-300">
-                {WORK_STATUS_LABELS[workStatusFilter as WorkStatus]}
-              </span>
-              .
-            </p>
-            <p className="text-sm mt-1">
-              {works.length} other work{works.length === 1 ? "" : "s"} on this
-              client — clear the filter to see them.
-            </p>
-          </div>
-        ) : (
-          <div className="divide-y divide-neutral-800">
-            {visibleWorks.map((w) => (
-              <Link
-                key={w.id}
-                href={`/app/works/${w.id}`}
-                className="block px-4 py-3 hover:bg-neutral-900/60 transition-colors"
-              >
-                <div className="flex items-center justify-between gap-4">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="font-medium text-white">
-                        {w.title || w.video_type || "Untitled work"}
-                      </span>
-                      <span
-                        className={`text-xs px-2 py-0.5 rounded border ${WORK_STATUS_COLORS[w.status as WorkStatus]}`}
-                      >
-                        {WORK_STATUS_LABELS[w.status as WorkStatus]}
-                      </span>
+          <section className="bg-neutral-950 border border-neutral-800 rounded-lg overflow-hidden mb-6">
+            <div className="px-4 py-3 border-b border-neutral-800 flex items-center justify-between gap-2">
+              <div>
+                <h2 className="font-semibold text-white">Works</h2>
+                <p className="text-xs text-neutral-500 mt-0.5">
+                  {visibleWorks.length} of {works?.length || 0}{" "}
+                  {workStatusFilter === "all"
+                    ? "total"
+                    : WORK_STATUS_LABELS[workStatusFilter]}
+                </p>
+                {canCreateWork && !isWorkAllowedStatus && (
+                  <p className="text-xs text-neutral-500 mt-0.5">
+                    Move client to <span className="text-lime-400">Trial</span>,{" "}
+                    <span className="text-lime-400">Ongoing</span>, or{" "}
+                    <span className="text-lime-400">In Talks</span> to add a new
+                    work.
+                  </p>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <WorkStatusFilter current={workStatusFilter} />
+                {showCreateWork && (
+                  <CreateWorkButton
+                    clientId={client.id}
+                    clientName={client.name}
+                  />
+                )}
+              </div>
+            </div>
+            {!works || works.length === 0 ? (
+              <div className="p-8 text-center text-neutral-500">
+                <p>No works yet for this client.</p>
+                {showCreateWork && (
+                  <p className="text-sm mt-1">
+                    Use + Create Work above to add one.
+                  </p>
+                )}
+                {canCreateWork && !isWorkAllowedStatus && (
+                  <p className="text-sm mt-1">
+                    Status is{" "}
+                    <span className="text-neutral-300">
+                      {CLIENT_STATUS_LABELS[status]}
+                    </span>{" "}
+                    — works can only be added on Trial / Ongoing / In Talks
+                    clients.
+                  </p>
+                )}
+              </div>
+            ) : visibleWorks.length === 0 ? (
+              <div className="p-8 text-center text-neutral-500">
+                <p>
+                  No works with status{" "}
+                  <span className="text-neutral-300">
+                    {WORK_STATUS_LABELS[workStatusFilter as WorkStatus]}
+                  </span>
+                  .
+                </p>
+                <p className="text-sm mt-1">
+                  {works.length} other work{works.length === 1 ? "" : "s"} on
+                  this client — clear the filter to see them.
+                </p>
+              </div>
+            ) : (
+              <div className="divide-y divide-neutral-800">
+                {visibleWorks.map((w) => (
+                  <Link
+                    key={w.id}
+                    href={`/app/works/${w.id}`}
+                    className="block px-4 py-3 hover:bg-neutral-900/60 transition-colors"
+                  >
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="font-medium text-white">
+                            {w.title || w.video_type || "Untitled work"}
+                          </span>
+                          <span
+                            className={`text-xs px-2 py-0.5 rounded border ${WORK_STATUS_COLORS[w.status as WorkStatus]}`}
+                          >
+                            {WORK_STATUS_LABELS[w.status as WorkStatus]}
+                          </span>
+                        </div>
+                        <div className="text-xs text-neutral-500">
+                          {w.video_type && <span>{w.video_type} · </span>}
+                          {(() => {
+                            const ids = creatorIdsByWork.get(w.id) || [
+                              w.creator_id,
+                            ];
+                            const names = ids.map(
+                              (id) => userNameMap.get(id) || "Unknown",
+                            );
+                            const label =
+                              names.length === 1
+                                ? "Creator"
+                                : `Creators (${names.length})`;
+                            const display =
+                              names.length <= 2
+                                ? names.join(", ")
+                                : `${names.slice(0, 2).join(", ")} +${names.length - 2}`;
+                            return `${label}: ${display}`;
+                          })()}
+                          {w.end_date && (
+                            <span>
+                              {" "}
+                              · Due{" "}
+                              {new Date(w.end_date).toLocaleDateString("en-US")}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-sm font-bold text-white">
+                          {(creditByWork.get(w.id) || 0).toFixed(1)}
+                          {w.max_credits && (
+                            <span className="text-neutral-500 text-xs">
+                              {" "}
+                              / {w.max_credits}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-xs text-neutral-500">
+                          credits · {RANGE_LABEL[range]}
+                        </div>
+                      </div>
                     </div>
-                    <div className="text-xs text-neutral-500">
-                      {w.video_type && <span>{w.video_type} · </span>}
-                      {(() => {
-                        const ids = creatorIdsByWork.get(w.id) || [
-                          w.creator_id,
-                        ];
-                        const names = ids.map(
-                          (id) => userNameMap.get(id) || "Unknown",
-                        );
-                        const label =
-                          names.length === 1
-                            ? "Creator"
-                            : `Creators (${names.length})`;
-                        const display =
-                          names.length <= 2
-                            ? names.join(", ")
-                            : `${names.slice(0, 2).join(", ")} +${names.length - 2}`;
-                        return `${label}: ${display}`;
-                      })()}
-                      {w.end_date && (
-                        <span>
-                          {" "}
-                          · Due{" "}
-                          {new Date(w.end_date).toLocaleDateString("en-US")}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-sm font-bold text-white">
-                      {(creditByWork.get(w.id) || 0).toFixed(1)}
-                      {w.max_credits && (
-                        <span className="text-neutral-500 text-xs">
-                          {" "}
-                          / {w.max_credits}
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-xs text-neutral-500">
-                      credits · {RANGE_LABEL[range]}
-                    </div>
-                  </div>
-                </div>
-              </Link>
-            ))}
-          </div>
-        )}
-      </section>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </section>
         );
       })()}
 
-      {/* PER-WORK PER-USER REPORT */}
       <WorkUserReport rows={reportRows} rangeLabel={RANGE_LABEL[range]} />
 
-      {/* ASSIGNED + WASTAGE TABLES — same pattern as the work-detail page,
-          with the 60s undo window for unassign / mark-useful. */}
       <ClientGenerationsTables
         clientName={client.name}
         generations={(generations || []).map((g) => ({

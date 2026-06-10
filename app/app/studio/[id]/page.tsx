@@ -43,47 +43,50 @@ export default async function StudioBatchPage({ params }: PageProps) {
   // requireActiveMembership returns the user's MOST-RECENT org role, which
   // may not match if this batch is in a different org.
   const batchOrgId = blueprints[0].org_id as string
-  const { data: scopedMembership } = await supabase
-    .from('memberships')
-    .select('role')
-    .eq('user_id', membership.user_id)
-    .eq('org_id', batchOrgId)
-    .eq('status', 'active')
-    .maybeSingle()
-  // Fall back to the helper's role if for some reason the scoped lookup
-  // misses (shouldn't — RLS guarantees the user is a member or they'd
-  // never have seen the blueprint above).
-  const role: Role = (scopedMembership?.role ?? membership.role) as Role
+  const blueprintIds = blueprints.map((b) => b.id)
+  const totalInBatch = blueprints.length
 
-  // Works list scoped to the batch's org — the PATCH route validates same-org
-  // anyway, but the dropdown shouldn't even offer foreign-org works.
-  const { data: works } = await supabase
-    .from('works')
-    .select('id, title, video_type')
-    .eq('org_id', batchOrgId)
-    .order('created_at', { ascending: false })
-    .limit(100)
+  const [
+    { data: scopedMembership },
+    { data: works },
+    { data: scoreRows, error: scoresError },
+    { data: outcomeRows, error: outcomesError },
+  ] = await Promise.all([
+    supabase
+      .from('memberships')
+      .select('role')
+      .eq('user_id', membership.user_id)
+      .eq('org_id', batchOrgId)
+      .eq('status', 'active')
+      .maybeSingle(),
+    supabase
+      .from('works')
+      .select('id, title, video_type')
+      .eq('org_id', batchOrgId)
+      .order('created_at', { ascending: false })
+      .limit(100),
+    supabase
+      .from('virality_scores')
+      .select(
+        'blueprint_id, overall_score, factor_breakdown, attention_curve, suggested_fixes, enhancement_possible, summary, tier, created_at',
+      )
+      .in('blueprint_id', blueprintIds)
+      .order('created_at', { ascending: false }),
+    supabase
+      .from('generation_outcomes')
+      .select(
+        'id, blueprint_id, platform, published_url, published_at, views, watch_time_avg_seconds, shares, saves, comments, likes, went_viral',
+      )
+      .in('blueprint_id', blueprintIds)
+      .order('recorded_at', { ascending: false }),
+  ])
+
+  const role: Role = (scopedMembership?.role ?? membership.role) as Role
 
   const workOptions = (works ?? []).map((w) => ({
     id: w.id as string,
     label: (w.title as string) || (w.video_type as string) || 'Untitled',
   }))
-
-  const totalInBatch = blueprints.length
-
-  // Fetch existing scores for these blueprints. The DESC ordering means the
-  // first row per blueprint_id seen is the LATEST score — that's what we
-  // surface (older scores stay in the table for the learning loop in Phase 6).
-  const blueprintIds = blueprints.map((b) => b.id)
-  const { data: scoreRows, error: scoresError } = blueprintIds.length
-    ? await supabase
-        .from('virality_scores')
-        .select(
-          'blueprint_id, overall_score, factor_breakdown, attention_curve, suggested_fixes, enhancement_possible, summary, tier, created_at',
-        )
-        .in('blueprint_id', blueprintIds)
-        .order('created_at', { ascending: false })
-    : { data: [], error: null }
 
   if (scoresError) {
     console.error('[studio:batch] scores query failed:', scoresError.message)
@@ -92,24 +95,9 @@ export default async function StudioBatchPage({ params }: PageProps) {
   const scoreMap = new Map<string, ScoreData>()
   ;(scoreRows ?? []).forEach((s) => {
     if (!scoreMap.has(s.blueprint_id)) {
-      // Cast: Supabase types JSONB cols as Json; we control the insert shape.
       scoreMap.set(s.blueprint_id, s as unknown as ScoreData)
     }
   })
-
-  // Phase 5 — outcomes per blueprint. Latest-first; we keep the FIRST row seen
-  // per blueprint_id, which is the latest. Older edits stay in the table as
-  // history (PATCH updates updated_at and we sort by recorded_at DESC for
-  // determinism — the row id never changes across edits).
-  const { data: outcomeRows, error: outcomesError } = blueprintIds.length
-    ? await supabase
-        .from('generation_outcomes')
-        .select(
-          'id, blueprint_id, platform, published_url, published_at, views, watch_time_avg_seconds, shares, saves, comments, likes, went_viral',
-        )
-        .in('blueprint_id', blueprintIds)
-        .order('recorded_at', { ascending: false })
-    : { data: [] as Array<Outcome & { blueprint_id: string }>, error: null }
 
   if (outcomesError) {
     console.error(

@@ -44,32 +44,71 @@ export default async function WorkDetailPage({ params }: PageProps) {
 
   if (!work) notFound();
 
-  // Fetch client + full creator list (work_creators join) in parallel.
-  const [{ data: client }, { data: workCreators }] = await Promise.all([
-    supabase
-      .from("clients")
-      .select("id, name, status")
-      .eq("id", work.client_id)
-      .maybeSingle(),
-    supabase
-      .from("work_creators")
-      .select("user_id, added_at")
-      .eq("work_id", work.id)
-      .order("added_at", { ascending: true }),
-  ]);
+  const NIL_UUID = "00000000-0000-0000-0000-000000000000";
 
-  // Build the ordered creator list: primary (works.creator_id) first, then
-  // any additional ones from work_creators. Defensive fallback to the
-  // primary alone if the join table is empty (pre-migration data).
+  const [{ data: client }, { data: workCreators }, { data: assignedToClient }] =
+    await Promise.all([
+      supabase
+        .from("clients")
+        .select("id, name, status")
+        .eq("id", work.client_id)
+        .maybeSingle(),
+      supabase
+        .from("work_creators")
+        .select("user_id, added_at")
+        .eq("work_id", work.id)
+        .order("added_at", { ascending: true }),
+      supabase
+        .from("generations")
+        .select(
+          "id, display_name, result_url, media_type, credits, hf_created_at, work_id, assigned_at, assigned_by, is_waste, wasted_at, wasted_by, hf_connection_label",
+        )
+        .eq("client_id", work.client_id)
+        .order("hf_created_at", { ascending: false }),
+    ]);
+
   const additionalCreatorIds = (workCreators || [])
     .map((r) => r.user_id as string)
     .filter((uid) => uid !== work.creator_id);
   const creatorIdList = [work.creator_id, ...additionalCreatorIds];
 
-  const { data: creatorMemberships } = await supabase
-    .from("memberships")
-    .select("user_id, full_name")
-    .in("user_id", creatorIdList);
+  const referencedWorkIds = Array.from(
+    new Set(
+      (assignedToClient || [])
+        .map((g) => g.work_id)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  );
+  const referencedAssignerIds = Array.from(
+    new Set(
+      (assignedToClient || [])
+        .map((g) => g.assigned_by)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  );
+
+  const [
+    { data: creatorMemberships },
+    { data: relatedWorks },
+    { data: assignerMemberships },
+  ] = await Promise.all([
+    supabase
+      .from("memberships")
+      .select("user_id, full_name")
+      .in("user_id", creatorIdList),
+    supabase
+      .from("works")
+      .select("id, status")
+      .in("id", referencedWorkIds.length ? referencedWorkIds : [NIL_UUID]),
+    supabase
+      .from("memberships")
+      .select("user_id, full_name")
+      .in(
+        "user_id",
+        referencedAssignerIds.length ? referencedAssignerIds : [NIL_UUID],
+      ),
+  ]);
+
   const creatorNameMap = new Map(
     (creatorMemberships || []).map((m) => [m.user_id, m.full_name]),
   );
@@ -79,51 +118,9 @@ export default async function WorkDetailPage({ params }: PageProps) {
     isPrimary: uid === work.creator_id,
   }));
 
-  // Only fetch generations that belong to THIS work's client — the
-  // assigned + wastage tables below the progress bar. (Unassigned ones live
-  // in the Sync & Assign modal and are fetched client-side after sync.)
-  const { data: assignedToClient } = await supabase
-    .from("generations")
-    .select(
-      "id, display_name, result_url, media_type, credits, hf_created_at, work_id, assigned_at, assigned_by, is_waste, wasted_at, wasted_by, hf_connection_label",
-    )
-    .eq("client_id", work.client_id)
-    .order("hf_created_at", { ascending: false });
-
-  // Batch-fetch statuses for every work referenced by an assigned generation
-  // so the AssignTables row can flag a "Rework" tag without an N+1.
-  const referencedWorkIds = Array.from(
-    new Set(
-      (assignedToClient || [])
-        .map((g) => g.work_id)
-        .filter((id): id is string => Boolean(id)),
-    ),
-  );
-  const { data: relatedWorks } = referencedWorkIds.length
-    ? await supabase
-        .from("works")
-        .select("id, status")
-        .in("id", referencedWorkIds)
-    : { data: [] as { id: string; status: string }[] };
   const workStatusMap: Record<string, WorkStatus> = Object.fromEntries(
     (relatedWorks || []).map((w) => [w.id, w.status as WorkStatus]),
   );
-
-  // Batch-fetch full_name for every user who has assigned a generation to
-  // this client — used by the per-creator stats panel inside Sync & Assign.
-  const referencedAssignerIds = Array.from(
-    new Set(
-      (assignedToClient || [])
-        .map((g) => g.assigned_by)
-        .filter((id): id is string => Boolean(id)),
-    ),
-  );
-  const { data: assignerMemberships } = referencedAssignerIds.length
-    ? await supabase
-        .from("memberships")
-        .select("user_id, full_name")
-        .in("user_id", referencedAssignerIds)
-    : { data: [] as { user_id: string; full_name: string }[] };
   const assignerNameMap: Record<string, string> = Object.fromEntries(
     (assignerMemberships || []).map((m) => [m.user_id, m.full_name]),
   );
