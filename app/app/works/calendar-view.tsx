@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react'
 import Link from 'next/link'
-import { ChevronLeft, ChevronRight, X, Plus, Lock } from 'lucide-react'
+import { ChevronLeft, ChevronRight, X, Plus, Lock, ArrowRight, ArrowLeft } from 'lucide-react'
 import { WORK_STATUS_COLORS, type WorkStatus } from '@/lib/work-helpers'
 import { CreateWorkDialog } from './create-work-dialog'
 import {
@@ -267,6 +267,9 @@ export function CalendarView({ works, clients }: Props) {
                           : undefined
                       }
                     >
+                      {prevHas && (
+                        <ArrowLeft className="size-2 shrink-0 text-current opacity-60" />
+                      )}
                       {prevHas ? (
                         <span className="truncate">{' '}</span>
                       ) : (
@@ -278,6 +281,9 @@ export function CalendarView({ works, clients }: Props) {
                             {w.title || 'Untitled'}
                           </span>
                         </>
+                      )}
+                      {nextHas && (
+                        <ArrowRight className="size-2 shrink-0 text-current opacity-60 ml-auto" />
                       )}
                     </Link>
                   )
