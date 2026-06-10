@@ -1,25 +1,25 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { Lock } from 'lucide-react'
 import { ViewToggle } from './view-toggle'
 import { CalendarView, type CalendarClient } from './calendar-view'
 import {
+  WORK_STATUSES,
   WORK_STATUS_COLORS,
   WORK_STATUS_LABELS,
   type WorkStatus,
   formatDateRange,
 } from '@/lib/work-helpers'
 
-// Section 1 — Client→Work cascade lock. A work is locked when its client is
-// paused or ended; the UI shows a small lock indicator so creators see at a
-// glance which works they can't act on.
 function isClientLocked(status: string | undefined): boolean {
   return status === 'paused' || status === 'ended'
 }
 
 type ViewMode = 'calendar' | 'cards'
+type FilterStatus = WorkStatus | 'all'
 
 interface WorkData {
   id: string
@@ -35,33 +35,35 @@ interface WorkData {
 }
 
 interface Props {
-  works: WorkData[]
+  allWorks: WorkData[]
   clientNameMap: Record<string, string>
-  /** client_id → status. Section 1 cascade — used to derive locked state. */
   clientStatusMap: Record<string, string>
   creatorNameMap: Record<string, string>
-  /** Per-work ordered list of every creator user_id (primary first). */
   creatorIdsByWork: Record<string, string[]>
   creditByWork: Record<string, number>
   clients: CalendarClient[]
+  initialFilterStatus?: string
+  isCreator: boolean
 }
 
 export function WorksView({
-  works,
+  allWorks,
   clientNameMap,
   clientStatusMap,
   creatorNameMap,
   creatorIdsByWork,
   creditByWork,
   clients,
+  initialFilterStatus,
+  isCreator,
 }: Props) {
+  const router = useRouter()
   const [view, setView] = useState<ViewMode>('calendar')
+  const [filterStatus, setFilterStatus] = useState<FilterStatus>(
+    (initialFilterStatus as FilterStatus) || 'all',
+  )
 
   useEffect(() => {
-    // SSR-safe localStorage read: initial state is 'calendar' on both server
-    // and first client render, then we sync to the stored preference once we
-    // know we're in the browser. The setState-in-effect lint rule is
-    // suppressed because reading localStorage before mount would crash SSR.
     const saved = localStorage.getItem('works-view-mode')
     if (saved === 'calendar' || saved === 'cards') {
       // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -74,35 +76,101 @@ export function WorksView({
     localStorage.setItem('works-view-mode', next)
   }
 
+  function handleFilterChange(next: FilterStatus) {
+    setFilterStatus(next)
+    // Keep URL in sync without re-fetching server data.
+    const url = next === 'all' ? '/app/works' : `/app/works?status=${next}`
+    router.replace(url, { scroll: false })
+  }
+
+  // Counts derived once from full dataset.
+  const counts = useMemo(() => {
+    const c: Record<FilterStatus, number> = {
+      all: allWorks.length,
+      ongoing: 0,
+      in_review: 0,
+      rework: 0,
+      paused: 0,
+      completed: 0,
+    }
+    allWorks.forEach((w) => {
+      c[w.status as WorkStatus]++
+    })
+    return c
+  }, [allWorks])
+
+  const visible = useMemo(
+    () =>
+      filterStatus === 'all'
+        ? allWorks
+        : allWorks.filter((w) => w.status === filterStatus),
+    [allWorks, filterStatus],
+  )
+
   return (
-    <div className="space-y-4">
-      <div className="flex justify-end">
-        <ViewToggle view={view} onViewChange={handleViewChange} />
+    <>
+      {/* TABS — client-side, instant switching */}
+      <div className="flex border-b border-neutral-800 gap-1 overflow-x-auto">
+        <button
+          type="button"
+          onClick={() => handleFilterChange('all')}
+          className={`px-4 py-2 text-sm border-b-2 transition-colors whitespace-nowrap ${
+            filterStatus === 'all'
+              ? 'border-lime-400 text-white'
+              : 'border-transparent text-neutral-400 hover:text-white'
+          }`}
+        >
+          All ({counts.all})
+        </button>
+        {WORK_STATUSES.map((s) => (
+          <button
+            key={s}
+            type="button"
+            onClick={() => handleFilterChange(s)}
+            className={`px-4 py-2 text-sm border-b-2 transition-colors whitespace-nowrap ${
+              filterStatus === s
+                ? 'border-lime-400 text-white'
+                : 'border-transparent text-neutral-400 hover:text-white'
+            }`}
+          >
+            {WORK_STATUS_LABELS[s]} ({counts[s]})
+          </button>
+        ))}
       </div>
 
-      {view === 'calendar' ? (
-        <CalendarView
-          works={works.map((w) => ({
-            id: w.id,
-            title: w.title || w.video_type || 'Untitled',
-            clientName: clientNameMap[w.client_id] || 'Unknown',
-            status: w.status as WorkStatus,
-            startDate: w.start_date,
-            endDate: w.end_date,
-            isLocked: isClientLocked(clientStatusMap[w.client_id]),
-            clientStatus: clientStatusMap[w.client_id] ?? null,
-          }))}
-          clients={clients}
-        />
+      {visible.length === 0 ? (
+        <div className="bg-neutral-950 border border-neutral-800 rounded-lg p-12 text-center">
+          <p className="text-neutral-400">
+            {allWorks.length === 0
+              ? isCreator
+                ? "You don't have any works assigned yet."
+                : 'No works yet. Create one from a Client page.'
+              : 'No works in this status.'}
+          </p>
+        </div>
       ) : (
-        <>
-          {works.length === 0 ? (
-            <div className="bg-neutral-950 border border-neutral-800 rounded-lg p-12 text-center">
-              <p className="text-neutral-400">No works in this view.</p>
-            </div>
+        <div className="space-y-4">
+          <div className="flex justify-end">
+            <ViewToggle view={view} onViewChange={handleViewChange} />
+          </div>
+
+          {view === 'calendar' ? (
+            <CalendarView
+              works={visible.map((w) => ({
+                id: w.id,
+                title: w.title || w.video_type || 'Untitled',
+                clientName: clientNameMap[w.client_id] || 'Unknown',
+                status: w.status as WorkStatus,
+                startDate: w.start_date,
+                endDate: w.end_date,
+                isLocked: isClientLocked(clientStatusMap[w.client_id]),
+                clientStatus: clientStatusMap[w.client_id] ?? null,
+              }))}
+              clients={clients}
+            />
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {works.map((w) => {
+              {visible.map((w) => {
                 const usedCredits = creditByWork[w.id] || 0
                 const status = w.status as WorkStatus
                 const clientStatus = clientStatusMap[w.client_id]
@@ -169,8 +237,8 @@ export function WorksView({
               })}
             </div>
           )}
-        </>
+        </div>
       )}
-    </div>
+    </>
   )
 }

@@ -1,14 +1,9 @@
 // app/app/works/page.tsx — works list with status tabs + calendar/card toggle.
+// Tabs filter client-side (instant) — all works are fetched once.
 
 import { Suspense } from "react";
 import { requireActiveMembership } from "@/lib/auth-helpers";
 import { createClient } from "@/lib/supabase-server";
-import Link from "next/link";
-import {
-  WORK_STATUSES,
-  WORK_STATUS_LABELS,
-  type WorkStatus,
-} from "@/lib/work-helpers";
 import { WorksView } from "./works-view";
 import { can } from "@/lib/rbac";
 
@@ -33,7 +28,7 @@ export default async function WorksPage({ searchParams }: PageProps) {
         </p>
       </div>
       <Suspense fallback={<WorksSkeleton />}>
-        <WorksContent filterStatus={filterStatus} />
+        <WorksContent initialFilterStatus={filterStatus} />
       </Suspense>
     </div>
   );
@@ -41,7 +36,7 @@ export default async function WorksPage({ searchParams }: PageProps) {
 
 const PLACEHOLDER = "00000000-0000-0000-0000-000000000000";
 
-async function WorksContent({ filterStatus }: { filterStatus?: string }) {
+async function WorksContent({ initialFilterStatus }: { initialFilterStatus?: string }) {
   const membership = await requireActiveMembership();
   const supabase = await createClient();
 
@@ -55,24 +50,8 @@ async function WorksContent({ filterStatus }: { filterStatus?: string }) {
     supabase.from("clients").select("id, name, status").order("name"),
   ]);
 
-  const counts: Record<WorkStatus | "all", number> = {
-    all: works?.length || 0,
-    ongoing: 0,
-    in_review: 0,
-    rework: 0,
-    paused: 0,
-    completed: 0,
-  };
-  (works || []).forEach((w) => {
-    counts[w.status as WorkStatus]++;
-  });
-
-  const visible =
-    filterStatus && filterStatus !== "all"
-      ? (works || []).filter((w) => w.status === filterStatus)
-      : works || [];
-
-  const workIds = visible.map((w) => w.id);
+  const allWorks = works || [];
+  const workIds = allWorks.map((w) => w.id);
 
   const canCreateWork = can(membership.role, "works", "create");
   const calendarClients = (allClients || []).map((c) => ({
@@ -95,7 +74,7 @@ async function WorksContent({ filterStatus }: { filterStatus?: string }) {
   ]);
 
   const creatorIdSet = new Set<string>();
-  visible.forEach((w) => creatorIdSet.add(w.creator_id));
+  allWorks.forEach((w) => creatorIdSet.add(w.creator_id));
   (workCreators || []).forEach((wc) => creatorIdSet.add(wc.user_id));
   const creatorIds = Array.from(creatorIdSet);
   const { data: creators } = await supabase
@@ -128,85 +107,31 @@ async function WorksContent({ filterStatus }: { filterStatus?: string }) {
     additionalByWork.set(wc.work_id, arr);
   });
   const creatorIdsByWork: Record<string, string[]> = {};
-  visible.forEach((w) => {
+  allWorks.forEach((w) => {
     const fromJoin = additionalByWork.get(w.id) || [];
     const others = fromJoin.filter((id) => id !== w.creator_id);
     creatorIdsByWork[w.id] = [w.creator_id, ...others];
   });
 
   return (
-    <>
-      {/* TABS */}
-      <div className="flex border-b border-neutral-800 gap-1 overflow-x-auto">
-        <Link
-          href="/app/works"
-          className={`px-4 py-2 text-sm border-b-2 transition-colors whitespace-nowrap ${
-            !filterStatus || filterStatus === "all"
-              ? "border-lime-400 text-white"
-              : "border-transparent text-neutral-400 hover:text-white"
-          }`}
-        >
-          All ({counts.all})
-        </Link>
-        {WORK_STATUSES.map((s) => (
-          <Link
-            key={s}
-            href={`/app/works?status=${s}`}
-            className={`px-4 py-2 text-sm border-b-2 transition-colors whitespace-nowrap ${
-              filterStatus === s
-                ? "border-lime-400 text-white"
-                : "border-transparent text-neutral-400 hover:text-white"
-            }`}
-          >
-            {WORK_STATUS_LABELS[s]} ({counts[s]})
-          </Link>
-        ))}
-      </div>
-
-      {/* WORKS CONTENT — calendar/cards toggle */}
-      {visible.length === 0 ? (
-        <div className="bg-neutral-950 border border-neutral-800 rounded-lg p-12 text-center">
-          <p className="text-neutral-400">
-            {!works || works.length === 0
-              ? membership.role === "creator"
-                ? "You don't have any works assigned yet."
-                : "No works yet. Create one from a Client page."
-              : "No works in this status."}
-          </p>
-        </div>
-      ) : (
-        <WorksView
-          works={visible}
-          clientNameMap={clientNameMap}
-          clientStatusMap={clientStatusMap}
-          creatorNameMap={creatorNameMap}
-          creatorIdsByWork={creatorIdsByWork}
-          creditByWork={creditByWork}
-          clients={calendarClients}
-        />
-      )}
-    </>
+    <WorksView
+      allWorks={allWorks}
+      clientNameMap={clientNameMap}
+      clientStatusMap={clientStatusMap}
+      creatorNameMap={creatorNameMap}
+      creatorIdsByWork={creatorIdsByWork}
+      creditByWork={creditByWork}
+      clients={calendarClients}
+      initialFilterStatus={initialFilterStatus}
+      isCreator={membership.role === "creator"}
+    />
   );
 }
 
 function WorksSkeleton() {
   return (
     <div className="space-y-4 animate-pulse">
-      <div className="flex gap-2 border-b border-neutral-800 pb-2">
-        <div className="h-8 w-16 rounded bg-neutral-900" />
-        <div className="h-8 w-24 rounded bg-neutral-900" />
-        <div className="h-8 w-20 rounded bg-neutral-900" />
-        <div className="h-8 w-20 rounded bg-neutral-900" />
-        <div className="h-8 w-24 rounded bg-neutral-900" />
-        <div className="h-8 w-24 rounded bg-neutral-900" />
-      </div>
-      <div className="flex justify-end">
-        <div className="h-9 w-32 rounded bg-neutral-900" />
-      </div>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        <div className="h-44 rounded-lg bg-neutral-900" />
-        <div className="h-44 rounded-lg bg-neutral-900" />
-        <div className="h-44 rounded-lg bg-neutral-900" />
         <div className="h-44 rounded-lg bg-neutral-900" />
         <div className="h-44 rounded-lg bg-neutral-900" />
         <div className="h-44 rounded-lg bg-neutral-900" />
