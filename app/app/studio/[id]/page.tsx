@@ -1,6 +1,6 @@
-// app/app/studio/[id]/page.tsx — batch detail. [id] is the batch_id; one
-// numbered section per variant. Less boxy: hero brief + accent-stripe list of
-// variants (see ../variant-card.tsx).
+// app/app/studio/[id]/page.tsx — batch detail.
+// Back link renders instantly; variants stream via Suspense.
+import { Suspense } from 'react'
 import { requireActiveMembership } from '@/lib/auth-helpers'
 import { createClient } from '@/lib/supabase-server'
 import { notFound } from 'next/navigation'
@@ -14,16 +14,28 @@ import { can, type Role } from '@/lib/rbac'
 interface PageProps { params: Promise<{ id: string }> }
 
 export default async function StudioBatchPage({ params }: PageProps) {
-  // requireActiveMembership returns the membership row so we don't have to
-  // re-query memberships below — and we need both user_id and role for the
-  // canDelete computation per variant.
-  const membership = await requireActiveMembership()
   const { id: batchId } = await params
+
+  return (
+    <div className="p-6 lg:p-10 max-w-4xl mx-auto space-y-8">
+      <Link
+        href="/app/studio"
+        className="inline-flex items-center gap-1.5 text-sm text-neutral-400 hover:text-white transition-colors"
+      >
+        <ArrowLeft className="size-4" />
+        Back to Studio
+      </Link>
+      <Suspense fallback={<BatchSkeleton />}>
+        <BatchContent batchId={batchId} />
+      </Suspense>
+    </div>
+  )
+}
+
+async function BatchContent({ batchId }: { batchId: string }) {
+  const membership = await requireActiveMembership()
   const supabase = await createClient()
 
-  // Added work_id + created_by + org_id (Phase 4) — required for the
-  // AttachToWork dropdown's current value, the canDelete ownership check, and
-  // for scoping the membership role + works list to THE BATCH'S org.
   const { data: blueprints, error: blueprintsError } = await supabase
     .from('prompt_blueprints')
     .select(
@@ -38,10 +50,6 @@ export default async function StudioBatchPage({ params }: PageProps) {
 
   if (!blueprints || blueprints.length === 0) notFound()
 
-  // All blueprints in a batch share an org. Re-query membership scoped to
-  // THAT org so canDelete uses the right role for multi-org users.
-  // requireActiveMembership returns the user's MOST-RECENT org role, which
-  // may not match if this batch is in a different org.
   const batchOrgId = blueprints[0].org_id as string
   const blueprintIds = blueprints.map((b) => b.id)
   const totalInBatch = blueprints.length
@@ -118,15 +126,7 @@ export default async function StudioBatchPage({ params }: PageProps) {
   const MediaIcon = mediaType === 'image' ? ImageIcon : Video
 
   return (
-    <div className="p-6 lg:p-10 max-w-4xl mx-auto space-y-8">
-      <Link
-        href="/app/studio"
-        className="inline-flex items-center gap-1.5 text-sm text-neutral-400 hover:text-white transition-colors"
-      >
-        <ArrowLeft className="size-4" />
-        Back to Studio
-      </Link>
-
+    <>
       {/* HERO BRIEF */}
       <div className="space-y-3">
         <div className="flex items-center gap-2 text-xs text-neutral-500">
@@ -144,10 +144,9 @@ export default async function StudioBatchPage({ params }: PageProps) {
         </h1>
       </div>
 
-      {/* VARIANTS — accent-stripe numbered sections */}
+      {/* VARIANTS */}
       <div className="space-y-6 pt-2">
         {blueprints.map((b, i) => {
-          // canDelete: own blueprint, OR the role has studio.delete.
           const canDelete =
             b.created_by === membership.user_id ||
             can(role, 'studio', 'delete')
@@ -170,6 +169,19 @@ export default async function StudioBatchPage({ params }: PageProps) {
           )
         })}
       </div>
+    </>
+  )
+}
+
+function BatchSkeleton() {
+  return (
+    <div className="space-y-6 animate-pulse">
+      <div className="space-y-3">
+        <div className="h-5 w-32 rounded bg-neutral-900" />
+        <div className="h-8 w-3/4 rounded bg-neutral-900" />
+      </div>
+      <div className="h-64 rounded-xl bg-neutral-900" />
+      <div className="h-64 rounded-xl bg-neutral-900" />
     </div>
   )
 }

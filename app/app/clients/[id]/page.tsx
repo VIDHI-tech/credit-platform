@@ -1,3 +1,6 @@
+// app/app/clients/[id]/page.tsx — client detail.
+// Back link renders instantly; content streams via Suspense.
+import { Suspense } from "react";
 import { requireActiveMembership } from "@/lib/auth-helpers";
 import { createClient } from "@/lib/supabase-server";
 import { can } from "@/lib/rbac";
@@ -51,23 +54,47 @@ export default async function ClientDetailPage({
   params,
   searchParams,
 }: PageProps) {
-  const membership = await requireActiveMembership();
   const { id } = await params;
   const sp = await searchParams;
-  const supabase = await createClient();
-
   const rawRange = (sp.range as ClientRange | undefined) || "all";
   const range: ClientRange = (
     ["all", "week", "month", "year"] as const
   ).includes(rawRange as ClientRange)
     ? (rawRange as ClientRange)
     : "all";
-
-  const workStatusFilter: WorkStatus | "all" = WORK_STATUSES.includes(
+  const wstatus: WorkStatus | "all" = WORK_STATUSES.includes(
     sp.wstatus as WorkStatus,
   )
     ? (sp.wstatus as WorkStatus)
     : "all";
+
+  return (
+    <div className="p-6 max-w-5xl mx-auto text-neutral-100">
+      <Link
+        href="/app/clients"
+        className="text-neutral-400 hover:text-white text-sm inline-flex items-center gap-1 mb-4"
+      >
+        ← Back to Clients
+      </Link>
+      <Suspense fallback={<ClientDetailSkeleton />}>
+        <ClientDetailContent id={id} range={range} workStatusFilter={wstatus} />
+      </Suspense>
+    </div>
+  );
+}
+
+async function ClientDetailContent({
+  id,
+  range,
+  workStatusFilter,
+}: {
+  id: string;
+  range: ClientRange;
+  workStatusFilter: WorkStatus | "all";
+}) {
+  const membership = await requireActiveMembership();
+  const supabase = await createClient();
+
   const daysBack = RANGE_DAYS[range];
   const fromIso =
     daysBack === null
@@ -211,7 +238,7 @@ export default async function ClientDetailPage({
   const creatorIdsByWork = new Map<string, string[]>();
   (works || []).forEach((w) => {
     const fromJoin = additionalCreatorsByWork.get(w.id) || [];
-    const others = fromJoin.filter((id) => id !== w.creator_id);
+    const others = fromJoin.filter((uid) => uid !== w.creator_id);
     creatorIdsByWork.set(w.id, [w.creator_id, ...others]);
   });
 
@@ -223,14 +250,7 @@ export default async function ClientDetailPage({
   const showCreateWork = canCreateWork && isWorkAllowedStatus;
 
   return (
-    <div className="p-6 max-w-5xl mx-auto text-neutral-100">
-      <Link
-        href="/app/clients"
-        className="text-neutral-400 hover:text-white text-sm inline-flex items-center gap-1 mb-4"
-      >
-        ← Back to Clients
-      </Link>
-
+    <>
       <div className="flex items-start justify-between gap-4 mb-2">
         <h1 className="text-3xl font-bold text-white">{client.name}</h1>
         <div className="flex items-center gap-2">
@@ -392,7 +412,7 @@ export default async function ClientDetailPage({
                               w.creator_id,
                             ];
                             const names = ids.map(
-                              (id) => userNameMap.get(id) || "Unknown",
+                              (uid) => userNameMap.get(uid) || "Unknown",
                             );
                             const label =
                               names.length === 1
@@ -472,6 +492,24 @@ export default async function ClientDetailPage({
           <DeleteClientButton clientId={client.id} clientName={client.name} />
         </section>
       )}
+    </>
+  );
+}
+
+function ClientDetailSkeleton() {
+  return (
+    <div className="space-y-6 animate-pulse">
+      <div className="flex items-start justify-between">
+        <div className="h-9 w-48 rounded bg-neutral-900" />
+        <div className="flex gap-2">
+          <div className="h-8 w-24 rounded bg-neutral-900" />
+          <div className="h-8 w-8 rounded bg-neutral-900" />
+        </div>
+      </div>
+      <div className="h-5 w-32 rounded bg-neutral-900" />
+      <div className="h-32 rounded-lg bg-neutral-900" />
+      <div className="h-64 rounded-lg bg-neutral-900" />
+      <div className="h-48 rounded-lg bg-neutral-900" />
     </div>
   );
 }

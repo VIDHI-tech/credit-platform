@@ -1,9 +1,6 @@
-// app/app/works/[id]/page.tsx — work detail
-// LAYOUT (Phase 6+):
-//   Top: header, meta cards, [Schedule | SyncAndAssign] (50/50 split)
-//   Below the credit-progress bar: 2-column grid (Assigned | Wastage).
-// The standalone "Unassigned generations" card has been removed — its
-// content moved into the Sync & Assign modal opened from the right column.
+// app/app/works/[id]/page.tsx — work detail.
+// Back link renders instantly; content streams via Suspense.
+import { Suspense } from "react";
 import { requireActiveMembership } from "@/lib/auth-helpers";
 import { createClient } from "@/lib/supabase-server";
 import { notFound } from "next/navigation";
@@ -29,11 +26,27 @@ interface PageProps {
 }
 
 export default async function WorkDetailPage({ params }: PageProps) {
-  const membership = await requireActiveMembership();
   const { id } = await params;
+
+  return (
+    <div className="p-6 text-neutral-100">
+      <Link
+        href="/app/works"
+        className="text-neutral-400 hover:text-white text-sm inline-flex items-center gap-1 mb-4"
+      >
+        ← Back to Works
+      </Link>
+      <Suspense fallback={<WorkDetailSkeleton />}>
+        <WorkDetailContent id={id} />
+      </Suspense>
+    </div>
+  );
+}
+
+async function WorkDetailContent({ id }: { id: string }) {
+  const membership = await requireActiveMembership();
   const supabase = await createClient();
 
-  // Fetch work by ID (RLS policy ensures user has access to this org's work)
   const { data: work } = await supabase
     .from("works")
     .select(
@@ -76,14 +89,14 @@ export default async function WorkDetailPage({ params }: PageProps) {
     new Set(
       (assignedToClient || [])
         .map((g) => g.work_id)
-        .filter((id): id is string => Boolean(id)),
+        .filter((wid): wid is string => Boolean(wid)),
     ),
   );
   const referencedAssignerIds = Array.from(
     new Set(
       (assignedToClient || [])
         .map((g) => g.assigned_by)
-        .filter((id): id is string => Boolean(id)),
+        .filter((aid): aid is string => Boolean(aid)),
     ),
   );
 
@@ -125,12 +138,6 @@ export default async function WorkDetailPage({ params }: PageProps) {
     (assignerMemberships || []).map((m) => [m.user_id, m.full_name]),
   );
 
-  // Per-creator breakdown for THIS work only.
-  // - actualUsage : credits on this work that are NOT wasted
-  // - wastage     : credits on this work that ARE wasted
-  // - rework      : credits whose work is in 'rework' status (this work counts
-  //                 when it's currently in rework, plus generations attributed
-  //                 to other works on the same client that are in rework)
   const perCreatorStats: Record<
     string,
     { name: string; actual: number; wastage: number; rework: number }
@@ -166,18 +173,10 @@ export default async function WorkDetailPage({ params }: PageProps) {
     .reduce((s, g) => s + parseFloat(g.credits || "0"), 0);
 
   const status = work.status as WorkStatus;
-  // Multi-creator: "own work" is true if the current user is ANY of the
-  // assigned creators (the primary OR a co-owner from work_creators).
   const isOwnWork = creatorIdList.includes(membership.user_id);
   const transitions = allowedTransitions(status, membership.role, isOwnWork);
   const maxCredits = work.max_credits ? parseFloat(work.max_credits) : null;
 
-  // Pre-fetch the instructions file content so the header button can open
-  // the modal client-side without a round-trip. Skipped if no file.
-  // If the file is recorded in the DB but the download fails (transient
-  // network/RLS issue), we still surface the file metadata so the icon
-  // doesn't silently fall back to the notes-only state — the modal will
-  // show a "couldn't load" affordance instead.
   let instructionsFilename: string | null = null;
   let instructionsFileExt: string | null = null;
   let instructionsFileContent: string | null = null;
@@ -204,24 +203,12 @@ export default async function WorkDetailPage({ params }: PageProps) {
     "delete",
   );
 
-  // Section 1 — cascade lock derivation. Surfaced in two places: the
-  // banner below the back link, and as the `locked` prop on
-  // StatusActionButtons (which hides the buttons + renders the pill).
   const clientLocked =
     client?.status === "paused" || client?.status === "ended";
 
   return (
-    <div className="p-6 text-neutral-100">
-      <Link
-        href="/app/works"
-        className="text-neutral-400 hover:text-white text-sm inline-flex items-center gap-1 mb-4"
-      >
-        ← Back to Works
-      </Link>
-
-      {/* CLIENT-LOCK BANNER — appears when the client cascade has locked
-          this work. Amber for visibility; the message explains the only way
-          to unlock (flip the client status back to an active state). */}
+    <>
+      {/* CLIENT-LOCK BANNER */}
       {clientLocked && (
         <div className="mb-4 flex items-start gap-2 rounded-lg bg-amber-950/40 border border-amber-800 px-4 py-2 text-sm text-amber-300">
           <Lock className="size-4 shrink-0 mt-0.5" />
@@ -283,12 +270,6 @@ export default async function WorkDetailPage({ params }: PageProps) {
             notes={work.notes}
           />
           {(() => {
-            // Section 1 — Client→Work cascade lock. When the client is paused
-            // or ended, every work in that client is locked: status buttons
-            // are hidden and a Locked pill renders instead. Server-side
-            // /api/works/[id]/status returns 409 if anyone bypasses the UI.
-            const clientLocked =
-              client?.status === "paused" || client?.status === "ended";
             if (clientLocked) {
               return (
                 <StatusActionButtons
@@ -416,10 +397,7 @@ export default async function WorkDetailPage({ params }: PageProps) {
         </div>
       )}
 
-      {/* Instructions are now accessible via the file-icon button in the
-          header (top-right) — no standalone section needed below. */}
-
-      {/* ASSIGNED + WASTAGE — 2-column below the progress bar */}
+      {/* ASSIGNED + WASTAGE */}
       <AssignTables
         workId={work.id}
         clientName={client?.name || ""}
@@ -428,6 +406,32 @@ export default async function WorkDetailPage({ params }: PageProps) {
         userRole={membership.role as "master" | "manager" | "creator"}
         userId={membership.user_id}
       />
+    </>
+  );
+}
+
+function WorkDetailSkeleton() {
+  return (
+    <div className="space-y-6 animate-pulse">
+      <div className="flex items-start justify-between">
+        <div className="space-y-2">
+          <div className="h-9 w-64 rounded bg-neutral-900" />
+          <div className="h-5 w-48 rounded bg-neutral-900" />
+        </div>
+        <div className="flex gap-2">
+          <div className="h-9 w-24 rounded bg-neutral-900" />
+          <div className="h-9 w-24 rounded bg-neutral-900" />
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-4">
+        <div className="h-20 rounded-lg bg-neutral-900" />
+        <div className="h-20 rounded-lg bg-neutral-900" />
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="h-72 rounded-lg bg-neutral-900" />
+        <div className="h-72 rounded-lg bg-neutral-900" />
+      </div>
+      <div className="h-48 rounded-lg bg-neutral-900" />
     </div>
   );
 }

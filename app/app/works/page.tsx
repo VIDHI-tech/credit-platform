@@ -1,4 +1,6 @@
 // app/app/works/page.tsx — works list with status tabs + calendar/card toggle.
+// Shell renders instantly; data streams in via Suspense.
+import { Suspense } from "react";
 import { requireActiveMembership } from "@/lib/auth-helpers";
 import { createClient } from "@/lib/supabase-server";
 import Link from "next/link";
@@ -16,11 +18,31 @@ interface PageProps {
   searchParams: Promise<{ status?: string }>;
 }
 
-const PLACEHOLDER = "00000000-0000-0000-0000-000000000000";
-
 export default async function WorksPage({ searchParams }: PageProps) {
   const membership = await requireActiveMembership();
   const { status: filterStatus } = await searchParams;
+
+  return (
+    <div className="p-6 space-y-6 text-neutral-100">
+      <div>
+        <h1 className="text-2xl font-bold text-white">Works</h1>
+        <p className="text-neutral-400 text-sm mt-1">
+          {membership.role === "creator"
+            ? "Your assigned works."
+            : "All works across the organization."}
+        </p>
+      </div>
+      <Suspense fallback={<WorksSkeleton />}>
+        <WorksContent filterStatus={filterStatus} />
+      </Suspense>
+    </div>
+  );
+}
+
+const PLACEHOLDER = "00000000-0000-0000-0000-000000000000";
+
+async function WorksContent({ filterStatus }: { filterStatus?: string }) {
+  const membership = await requireActiveMembership();
   const supabase = await createClient();
 
   const [{ data: works }, { data: allClients }] = await Promise.all([
@@ -50,11 +72,8 @@ export default async function WorksPage({ searchParams }: PageProps) {
       ? (works || []).filter((w) => w.status === filterStatus)
       : works || [];
 
-  const clientIds = [...new Set(visible.map((w) => w.client_id))];
   const workIds = visible.map((w) => w.id);
 
-  // Full client roster for the calendar "+" picker (all statuses for name
-  // lookup; we tag canCreateWork separately so the UI can grey out ineligible).
   const canCreateWork = can(membership.role, "works", "create");
   const calendarClients = (allClients || []).map((c) => ({
     id: c.id,
@@ -63,10 +82,7 @@ export default async function WorksPage({ searchParams }: PageProps) {
       canCreateWork && WORK_ALLOWED_CLIENT_STATUSES.includes(c.status),
   }));
 
-  const [
-    { data: workCredits },
-    { data: workCreators },
-  ] = await Promise.all([
+  const [{ data: workCredits }, { data: workCreators }] = await Promise.all([
     supabase
       .from("generations")
       .select("work_id, credits")
@@ -78,8 +94,6 @@ export default async function WorksPage({ searchParams }: PageProps) {
       .order("added_at", { ascending: true }),
   ]);
 
-  // Union of every user_id we'll need to render: primary creator on the
-  // work row + every co-owner from work_creators.
   const creatorIdSet = new Set<string>();
   visible.forEach((w) => creatorIdSet.add(w.creator_id));
   (workCreators || []).forEach((wc) => creatorIdSet.add(wc.user_id));
@@ -107,7 +121,6 @@ export default async function WorksPage({ searchParams }: PageProps) {
     }
   });
 
-  // Build ordered creator list per work: primary first, then co-owners.
   const additionalByWork = new Map<string, string[]>();
   (workCreators || []).forEach((wc) => {
     const arr = additionalByWork.get(wc.work_id) || [];
@@ -122,16 +135,7 @@ export default async function WorksPage({ searchParams }: PageProps) {
   });
 
   return (
-    <div className="p-6 space-y-6 text-neutral-100">
-      <div>
-        <h1 className="text-2xl font-bold text-white">Works</h1>
-        <p className="text-neutral-400 text-sm mt-1">
-          {membership.role === "creator"
-            ? "Your assigned works."
-            : "All works across the organization."}
-        </p>
-      </div>
-
+    <>
       {/* TABS */}
       <div className="flex border-b border-neutral-800 gap-1 overflow-x-auto">
         <Link
@@ -181,6 +185,32 @@ export default async function WorksPage({ searchParams }: PageProps) {
           clients={calendarClients}
         />
       )}
+    </>
+  );
+}
+
+function WorksSkeleton() {
+  return (
+    <div className="space-y-4 animate-pulse">
+      <div className="flex gap-2 border-b border-neutral-800 pb-2">
+        <div className="h-8 w-16 rounded bg-neutral-900" />
+        <div className="h-8 w-24 rounded bg-neutral-900" />
+        <div className="h-8 w-20 rounded bg-neutral-900" />
+        <div className="h-8 w-20 rounded bg-neutral-900" />
+        <div className="h-8 w-24 rounded bg-neutral-900" />
+        <div className="h-8 w-24 rounded bg-neutral-900" />
+      </div>
+      <div className="flex justify-end">
+        <div className="h-9 w-32 rounded bg-neutral-900" />
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="h-44 rounded-lg bg-neutral-900" />
+        <div className="h-44 rounded-lg bg-neutral-900" />
+        <div className="h-44 rounded-lg bg-neutral-900" />
+        <div className="h-44 rounded-lg bg-neutral-900" />
+        <div className="h-44 rounded-lg bg-neutral-900" />
+        <div className="h-44 rounded-lg bg-neutral-900" />
+      </div>
     </div>
   );
 }

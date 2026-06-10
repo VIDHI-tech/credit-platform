@@ -1,6 +1,6 @@
 // app/app/studio/page.tsx — Studio home.
-// Less boxy: hero text + unified brief card + Recent as a borderless list,
-// not a grid of cards.
+// Hero renders instantly; brief form + recent list stream via Suspense.
+import { Suspense } from 'react'
 import { requireActiveMembership } from '@/lib/auth-helpers'
 import { createClient } from '@/lib/supabase-server'
 import Link from 'next/link'
@@ -8,10 +8,31 @@ import { Video, ImageIcon, ArrowUpRight, Sparkles, Database } from 'lucide-react
 import { BriefForm } from './brief-form'
 
 export default async function StudioPage() {
-  // requireActiveMembership returns the user's most-recently-approved active
-  // org — same org that BriefForm targets when generating a new prompt. The
-  // Tier-2 indicator below is scoped to THAT org so it answers the question
-  // the user actually has: "if I write a brief now, will it get Tier-2?"
+  return (
+    <div className="p-6 lg:p-10 max-w-4xl mx-auto space-y-10">
+      {/* HERO — renders instantly */}
+      <div className="space-y-2">
+        <div className="inline-flex items-center gap-2 rounded-full bg-lime-400/10 border border-lime-400/30 px-3 py-1 text-xs text-lime-400">
+          <Sparkles className="size-3.5" />
+          <span>Prompt Architect</span>
+        </div>
+        <h1 className="text-3xl lg:text-4xl font-bold text-white tracking-tight">
+          Turn a brief into a director-grade prompt
+        </h1>
+        <p className="text-neutral-400 text-sm max-w-2xl">
+          Describe your idea — Studio drafts 2–3 distinct variants, each with the
+          full structured direction (subjects, scenes, lighting, audio). Copy the
+          winner into Higgsfield.
+        </p>
+      </div>
+      <Suspense fallback={<StudioSkeleton />}>
+        <StudioContent />
+      </Suspense>
+    </div>
+  )
+}
+
+async function StudioContent() {
   const membership = await requireActiveMembership()
   const supabase = await createClient()
 
@@ -40,9 +61,6 @@ export default async function StudioPage() {
     console.error('[studio] prompt_blueprints query failed:', blueprintsError.message)
   }
 
-  // Phase 4: best score per batch. Fetched against ALL blueprints (not just
-  // the deduped batch list) because each batch has multiple variants and the
-  // best score may live on a sibling. RLS gates this by org membership.
   const allBlueprintIds = (blueprints ?? []).map((b) => b.id)
   const { data: allScores } = allBlueprintIds.length
     ? await supabase
@@ -51,16 +69,11 @@ export default async function StudioPage() {
         .in('blueprint_id', allBlueprintIds)
     : { data: [] as Array<{ blueprint_id: string; overall_score: number }> }
 
-  // blueprint_id → score; one row per blueprint (the partial unique index on
-  // tier=1 guarantees that), so we don't need to pick a "best".
   const scoreByBlueprint = new Map<string, number>()
   ;(allScores ?? []).forEach((s) => {
     scoreByBlueprint.set(s.blueprint_id, Number(s.overall_score))
   })
 
-  // Compute the BEST score across a batch's variants + the variant count.
-  // The DESC ordering above means we iterate newest-first, but for aggregation
-  // order doesn't matter.
   const batchMeta = new Map<
     string,
     { count: number; bestScore: number | null }
@@ -80,7 +93,6 @@ export default async function StudioPage() {
     })
   })
 
-  // Dedup depends on the DESC order above: the FIRST row per batch is newest.
   const seen = new Set<string>()
   const batches = (blueprints ?? []).filter((b) => {
     if (seen.has(b.batch_id)) return false
@@ -93,57 +105,39 @@ export default async function StudioPage() {
   const tier2Active = outcomeCountSafe >= TIER2_THRESHOLD
 
   return (
-    <div className="p-6 lg:p-10 max-w-4xl mx-auto space-y-10">
-      {/* HERO */}
-      <div className="space-y-2">
-        <div className="inline-flex items-center gap-2 rounded-full bg-lime-400/10 border border-lime-400/30 px-3 py-1 text-xs text-lime-400">
-          <Sparkles className="size-3.5" />
-          <span>Prompt Architect</span>
+    <>
+      {/* Tier-2 indicator */}
+      {outcomeCountSafe > 0 ? (
+        <div className="-mt-8">
+          {tier2Active ? (
+            <span
+              className="inline-flex items-center gap-1.5 rounded-full bg-lime-400/10 border border-lime-400/30 px-2.5 py-1 text-xs text-lime-400"
+              title="Tier-2 scoring is active: the scorer is calibrating against your org's recorded outcomes."
+            >
+              <Database className="size-3" />
+              Tier 2 active ·{' '}
+              <span className="font-mono tabular-nums">
+                {outcomeCountSafe}
+              </span>{' '}
+              outcomes
+            </span>
+          ) : (
+            <span
+              className="inline-flex items-center gap-1.5 rounded-full bg-neutral-900 border border-neutral-800 px-2.5 py-1 text-xs text-neutral-400"
+              title="Tier-2 scoring unlocks once you have 50 recorded outcomes — until then the scorer uses a generic rubric."
+            >
+              <Database className="size-3 text-neutral-500" />
+              <span className="font-mono tabular-nums text-neutral-300">
+                {outcomeCountSafe}
+              </span>
+              /{TIER2_THRESHOLD} outcomes ·{' '}
+              <span className="text-neutral-500">
+                Tier-2 unlocks at {TIER2_THRESHOLD}
+              </span>
+            </span>
+          )}
         </div>
-        <h1 className="text-3xl lg:text-4xl font-bold text-white tracking-tight">
-          Turn a brief into a director-grade prompt
-        </h1>
-        <p className="text-neutral-400 text-sm max-w-2xl">
-          Describe your idea — Studio drafts 2–3 distinct variants, each with the
-          full structured direction (subjects, scenes, lighting, audio). Copy the
-          winner into Higgsfield.
-        </p>
-        {/* Tier-2 indicator — only shown when at least one outcome exists,
-            to avoid noise for fresh orgs. Lime pill when active, neutral
-            progress pill while still under threshold. Matches the per-score
-            Tier badge styling so the two surfaces tell the same story. */}
-        {outcomeCountSafe > 0 ? (
-          <div className="pt-1">
-            {tier2Active ? (
-              <span
-                className="inline-flex items-center gap-1.5 rounded-full bg-lime-400/10 border border-lime-400/30 px-2.5 py-1 text-xs text-lime-400"
-                title="Tier-2 scoring is active: the scorer is calibrating against your org’s recorded outcomes."
-              >
-                <Database className="size-3" />
-                Tier 2 active ·{' '}
-                <span className="font-mono tabular-nums">
-                  {outcomeCountSafe}
-                </span>{' '}
-                outcomes
-              </span>
-            ) : (
-              <span
-                className="inline-flex items-center gap-1.5 rounded-full bg-neutral-900 border border-neutral-800 px-2.5 py-1 text-xs text-neutral-400"
-                title="Tier-2 scoring unlocks once you have 50 recorded outcomes — until then the scorer uses a generic rubric."
-              >
-                <Database className="size-3 text-neutral-500" />
-                <span className="font-mono tabular-nums text-neutral-300">
-                  {outcomeCountSafe}
-                </span>
-                /{TIER2_THRESHOLD} outcomes ·{' '}
-                <span className="text-neutral-500">
-                  Tier-2 unlocks at {TIER2_THRESHOLD}
-                </span>
-              </span>
-            )}
-          </div>
-        ) : null}
-      </div>
+      ) : null}
 
       {/* BRIEF FORM */}
       <BriefForm
@@ -153,7 +147,7 @@ export default async function StudioPage() {
         }))}
       />
 
-      {/* RECENT — borderless list, not a grid of boxes */}
+      {/* RECENT — borderless list */}
       <section className="space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold text-neutral-300">Recent briefs</h2>
@@ -174,15 +168,10 @@ export default async function StudioPage() {
                 count: 1,
                 bestScore: null,
               }
-              // Number.isFinite guards against any degenerate NaN/Infinity
-              // slipping through Number(s.overall_score) — the column is NUMERIC
-              // NOT NULL so it shouldn't happen, but a malformed cast would
-              // currently render "NaN" in the chip.
               const best =
                 meta.bestScore !== null && Number.isFinite(meta.bestScore)
                   ? meta.bestScore
                   : null
-              // Same threshold bands as ScorePanel for visual consistency.
               const scoreCls =
                 best === null
                   ? 'text-neutral-600'
@@ -229,6 +218,22 @@ export default async function StudioPage() {
           </ul>
         )}
       </section>
+    </>
+  )
+}
+
+function StudioSkeleton() {
+  return (
+    <div className="space-y-10 animate-pulse">
+      <div className="h-64 rounded-xl bg-neutral-900" />
+      <div className="space-y-3">
+        <div className="h-5 w-28 rounded bg-neutral-900" />
+        <div className="space-y-2">
+          <div className="h-14 rounded-lg bg-neutral-900" />
+          <div className="h-14 rounded-lg bg-neutral-900" />
+          <div className="h-14 rounded-lg bg-neutral-900" />
+        </div>
+      </div>
     </div>
   )
 }

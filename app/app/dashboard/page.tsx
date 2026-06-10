@@ -1,4 +1,6 @@
-// app/app/dashboard/page.tsx — role-aware command center (server component).
+// app/app/dashboard/page.tsx — role-aware command center.
+// Header renders instantly; KPIs + sections stream via Suspense.
+import { Suspense } from 'react'
 import { requireActiveMembership } from '@/lib/auth-helpers'
 import { createClient } from '@/lib/supabase-server'
 import { can } from '@/lib/rbac'
@@ -14,12 +16,27 @@ import { ClientPipelineCard } from './client-pipeline-card'
 
 export default async function DashboardPage() {
   const membership = await requireActiveMembership()
+
+  return (
+    <div className="p-6 space-y-6 text-neutral-100">
+      <div>
+        <h1 className="text-2xl font-bold text-white">Dashboard</h1>
+        <p className="text-neutral-400 text-sm mt-1">
+          Welcome back, {membership.full_name}.
+        </p>
+      </div>
+      <Suspense fallback={<DashboardSkeleton />}>
+        <DashboardContent />
+      </Suspense>
+    </div>
+  )
+}
+
+async function DashboardContent() {
+  const membership = await requireActiveMembership()
   const supabase = await createClient()
   const isCreator = membership.role === 'creator'
 
-  // Parallel fetch — RLS handles role-scoping automatically.
-  // work_creators is fetched so "my works" includes any work I co-own
-  // (multi-creator), not just the works where I'm the primary creator_id.
   const [
     { data: generations },
     { data: clients },
@@ -47,7 +64,6 @@ export default async function DashboardPage() {
     (myWorkRows || []).map((r) => r.work_id as string),
   )
 
-  // ===== AGGREGATIONS =====
   const totalCredits = (generations || []).reduce(
     (s, g) => s + parseFloat(g.credits || '0'),
     0
@@ -56,8 +72,6 @@ export default async function DashboardPage() {
     .filter((g) => !g.client_id)
     .reduce((s, g) => s + parseFloat(g.credits || '0'), 0)
 
-  // "My works" = the union of (works.creator_id === me) AND
-  // (any work_creators row links me to the work). Multi-creator support.
   const myWorkIds = new Set<string>([
     ...(works || [])
       .filter((w) => w.creator_id === membership.user_id)
@@ -97,7 +111,6 @@ export default async function DashboardPage() {
     .sort((a, b) => b.count - a.count)
     .slice(0, 10)
 
-  // Near deadline (14 days, exclude completed). DATE columns compare as strings.
   const today = new Date()
   today.setHours(0, 0, 0, 0)
   const twoWeeksFromNow = new Date(today.getTime() + 14 * 24 * 60 * 60 * 1000)
@@ -144,15 +157,7 @@ export default async function DashboardPage() {
   }
 
   return (
-    <div className="p-6 space-y-6 text-neutral-100">
-      {/* HEADER */}
-      <div>
-        <h1 className="text-2xl font-bold text-white">Dashboard</h1>
-        <p className="text-neutral-400 text-sm mt-1">
-          Welcome back, {membership.full_name}.
-        </p>
-      </div>
-
+    <>
       {/* KPI CARDS */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         {isCreator ? (
@@ -424,11 +429,9 @@ export default async function DashboardPage() {
           </div>
         </section>
       )}
-    </div>
+    </>
   )
 }
-
-// ----- KPI Card (inline) -----
 
 function KpiCard({
   label,
@@ -460,4 +463,19 @@ function KpiCard({
   )
 
   return href ? <Link href={href}>{card}</Link> : card
+}
+
+function DashboardSkeleton() {
+  return (
+    <div className="space-y-6 animate-pulse">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="h-24 rounded-lg bg-neutral-900" />
+        <div className="h-24 rounded-lg bg-neutral-900" />
+        <div className="h-24 rounded-lg bg-neutral-900" />
+        <div className="h-24 rounded-lg bg-neutral-900" />
+      </div>
+      <div className="h-48 rounded-lg bg-neutral-900" />
+      <div className="h-64 rounded-lg bg-neutral-900" />
+    </div>
+  )
 }
