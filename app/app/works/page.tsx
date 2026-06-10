@@ -1,5 +1,5 @@
 // app/app/works/page.tsx — works list with status tabs + calendar/card toggle.
-// Shell renders instantly; data streams in via Suspense.
+
 import { Suspense } from "react";
 import { requireActiveMembership } from "@/lib/auth-helpers";
 import { createClient } from "@/lib/supabase-server";
