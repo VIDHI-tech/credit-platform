@@ -1,5 +1,7 @@
 // app/app/works/[id]/page.tsx — work detail.
 // Back link renders instantly; content streams via Suspense.
+// Uses work_credit_total + work_creator_breakdown RPCs to skip the
+// "pull every generation row to compute SUM/breakdown in JS" pattern.
 import { Suspense } from "react";
 import { requireActiveMembership } from "@/lib/auth-helpers";
 import { createClient } from "@/lib/supabase-server";
@@ -20,6 +22,13 @@ import { SyncAndAssign } from "./sync-and-assign";
 import { InstructionsButton } from "./instructions-button";
 import { ScheduleCalendar } from "./schedule-calendar";
 import { WorkActions } from "./work-actions";
+
+const NIL_UUID = "00000000-0000-0000-0000-000000000000";
+// Cap on rows passed to AssignTables (which paginates client-side at 50/page).
+// 500 = 10 pages of history per work — enough for almost every real work.
+// Aggregates (totals + per-creator breakdown) come from RPCs so they stay
+// accurate even beyond this cap.
+const GENERATIONS_DISPLAY_LIMIT = 500;
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -47,6 +56,8 @@ async function WorkDetailContent({ id }: { id: string }) {
   const membership = await requireActiveMembership();
   const supabase = await createClient();
 
+  // WAVE 1 — fetch the work itself. We need work.client_id before we can fire
+  // the next wave's client-scoped queries.
   const { data: work } = await supabase
     .from("works")
     .select(
@@ -57,29 +68,49 @@ async function WorkDetailContent({ id }: { id: string }) {
 
   if (!work) notFound();
 
-  const NIL_UUID = "00000000-0000-0000-0000-000000000000";
+  // WAVE 2 — six queries in parallel.
+  // The two RPCs (credit total + per-creator breakdown) replace the JS
+  // reduce loops that used to walk the entire assignedToClient list.
+  const [
+    { data: client },
+    { data: workCreators },
+    { data: assignedToClient },
+    { data: workCreditTotal },
+    { data: creatorBreakdown },
+    { data: instructionsBlob },
+  ] = await Promise.all([
+    supabase
+      .from("clients")
+      .select("id, name, status")
+      .eq("id", work.client_id)
+      .maybeSingle(),
+    supabase
+      .from("work_creators")
+      .select("user_id, added_at")
+      .eq("work_id", work.id)
+      .order("added_at", { ascending: true }),
+    supabase
+      .from("generations")
+      .select(
+        "id, display_name, result_url, media_type, credits, hf_created_at, work_id, assigned_at, assigned_by, is_waste, wasted_at, wasted_by, hf_connection_label",
+      )
+      .eq("client_id", work.client_id)
+      .order("hf_created_at", { ascending: false })
+      .limit(GENERATIONS_DISPLAY_LIMIT),
+    supabase.rpc("work_credit_total", { p_work_id: work.id }),
+    supabase.rpc("work_creator_breakdown", {
+      p_client_id: work.client_id,
+      p_work_id: work.id,
+    }),
+    work.instructions_path
+      ? supabase.storage
+          .from("work-instructions")
+          .download(work.instructions_path)
+      : Promise.resolve({ data: null }),
+  ]);
 
-  const [{ data: client }, { data: workCreators }, { data: assignedToClient }] =
-    await Promise.all([
-      supabase
-        .from("clients")
-        .select("id, name, status")
-        .eq("id", work.client_id)
-        .maybeSingle(),
-      supabase
-        .from("work_creators")
-        .select("user_id, added_at")
-        .eq("work_id", work.id)
-        .order("added_at", { ascending: true }),
-      supabase
-        .from("generations")
-        .select(
-          "id, display_name, result_url, media_type, credits, hf_created_at, work_id, assigned_at, assigned_by, is_waste, wasted_at, wasted_by, hf_connection_label",
-        )
-        .eq("client_id", work.client_id)
-        .order("hf_created_at", { ascending: false }),
-    ]);
-
+  // Derive every user_id we need (creators + assigners) from wave 2 results
+  // so wave 3 can pull all memberships in ONE call.
   const additionalCreatorIds = (workCreators || [])
     .map((r) => r.user_id as string)
     .filter((uid) => uid !== work.creator_id);
@@ -92,85 +123,56 @@ async function WorkDetailContent({ id }: { id: string }) {
         .filter((wid): wid is string => Boolean(wid)),
     ),
   );
-  const referencedAssignerIds = Array.from(
-    new Set(
-      (assignedToClient || [])
-        .map((g) => g.assigned_by)
-        .filter((aid): aid is string => Boolean(aid)),
-    ),
-  );
+  const assignerIds = ((creatorBreakdown as { assigned_by: string }[] | null) || [])
+    .map((r) => r.assigned_by)
+    .filter(Boolean);
 
-  const [
-    { data: creatorMemberships },
-    { data: relatedWorks },
-    { data: assignerMemberships },
-  ] = await Promise.all([
+  const allUserIds = Array.from(new Set([...creatorIdList, ...assignerIds]));
+
+  // WAVE 3 — memberships for all user ids + work statuses for related works.
+  const [{ data: allMemberships }, { data: relatedWorks }] = await Promise.all([
     supabase
       .from("memberships")
       .select("user_id, full_name")
-      .in("user_id", creatorIdList),
+      .in("user_id", allUserIds.length ? allUserIds : [NIL_UUID]),
     supabase
       .from("works")
       .select("id, status")
       .in("id", referencedWorkIds.length ? referencedWorkIds : [NIL_UUID]),
-    supabase
-      .from("memberships")
-      .select("user_id, full_name")
-      .in(
-        "user_id",
-        referencedAssignerIds.length ? referencedAssignerIds : [NIL_UUID],
-      ),
   ]);
 
-  const creatorNameMap = new Map(
-    (creatorMemberships || []).map((m) => [m.user_id, m.full_name]),
+  const nameMap = new Map(
+    (allMemberships || []).map((m) => [m.user_id, m.full_name]),
   );
+
   const creatorRoster = creatorIdList.map((uid) => ({
     user_id: uid,
-    name: creatorNameMap.get(uid) || "Unknown",
+    name: nameMap.get(uid) || "Unknown",
     isPrimary: uid === work.creator_id,
   }));
 
   const workStatusMap: Record<string, WorkStatus> = Object.fromEntries(
     (relatedWorks || []).map((w) => [w.id, w.status as WorkStatus]),
   );
-  const assignerNameMap: Record<string, string> = Object.fromEntries(
-    (assignerMemberships || []).map((m) => [m.user_id, m.full_name]),
-  );
 
-  const perCreatorStats: Record<
-    string,
-    { name: string; actual: number; wastage: number; rework: number }
-  > = {};
-  for (const g of assignedToClient || []) {
-    if (!g.assigned_by) continue;
-    const credits = parseFloat(g.credits || "0");
-    if (!perCreatorStats[g.assigned_by]) {
-      perCreatorStats[g.assigned_by] = {
-        name: assignerNameMap[g.assigned_by] || "Unknown",
-        actual: 0,
-        wastage: 0,
-        rework: 0,
-      };
-    }
-    const row = perCreatorStats[g.assigned_by];
-    const onThisWork = g.work_id === work.id;
-    if (onThisWork) {
-      if (g.is_waste) row.wastage += credits;
-      else row.actual += credits;
-    }
-    if (g.work_id && workStatusMap[g.work_id] === "rework") {
-      row.rework += credits;
-    }
-  }
-  const creatorStats = Object.entries(perCreatorStats).map(([userId, s]) => ({
-    userId,
-    ...s,
+  // creatorStats comes directly from the RPC — no JS reduce loop.
+  const creatorStats = (
+    (creatorBreakdown as {
+      assigned_by: string;
+      actual_credits: string | number;
+      wastage_credits: string | number;
+      rework_credits: string | number;
+    }[] | null) || []
+  ).map((row) => ({
+    userId: row.assigned_by,
+    name: nameMap.get(row.assigned_by) || "Unknown",
+    actual: Number(row.actual_credits) || 0,
+    wastage: Number(row.wastage_credits) || 0,
+    rework: Number(row.rework_credits) || 0,
   }));
 
-  const usedCredits = (assignedToClient || [])
-    .filter((g) => g.work_id === work.id)
-    .reduce((s, g) => s + parseFloat(g.credits || "0"), 0);
+  // usedCredits comes from the RPC, not from filtering assignedToClient.
+  const usedCredits = Number(workCreditTotal) || 0;
 
   const status = work.status as WorkStatus;
   const isOwnWork = creatorIdList.includes(membership.user_id);
@@ -185,11 +187,8 @@ async function WorkDetailContent({ id }: { id: string }) {
       work.instructions_path.split("/").pop() || "instructions.txt";
     instructionsFilename = filename;
     instructionsFileExt = filename.split(".").pop()?.toLowerCase() || "txt";
-    const { data: fileBlob } = await supabase.storage
-      .from("work-instructions")
-      .download(work.instructions_path);
-    if (fileBlob) {
-      instructionsFileContent = await fileBlob.text();
+    if (instructionsBlob) {
+      instructionsFileContent = await (instructionsBlob as Blob).text();
     }
   }
   const canEdit = can(

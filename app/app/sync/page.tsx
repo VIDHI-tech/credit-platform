@@ -488,7 +488,7 @@ export default function SyncPage() {
             <p className="text-sm mt-1">Click Sync to load your history.</p>
           </div>
         ) : (
-          <div className="flex flex-col overflow-hidden">
+          <div className="flex flex-col overflow-hidden max-h-[90vh]">
             <div className="flex-1 overflow-auto">
               <table className="w-full text-sm">
               <thead className="bg-neutral-900 sticky top-0">
@@ -695,7 +695,7 @@ export default function SyncPage() {
               <p>Nothing assigned yet.</p>
             </div>
           ) : (
-            <div className="flex flex-col overflow-hidden">
+            <div className="flex flex-col overflow-hidden max-h-[90vh]">
               <div className="flex-1 overflow-auto">
                 <table className="w-full text-xs">
                   <tbody className="divide-y divide-neutral-800">
@@ -815,7 +815,7 @@ export default function SyncPage() {
               <p>No wastage yet.</p>
             </div>
           ) : (
-            <div className="flex flex-col overflow-hidden">
+            <div className="flex flex-col overflow-hidden max-h-[90vh]">
               <div className="flex-1 overflow-auto">
                 <table className="w-full text-xs">
                   <tbody className="divide-y divide-neutral-800">

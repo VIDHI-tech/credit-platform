@@ -1,4 +1,6 @@
 // app/app/clients/page.tsx — clients list, filterable by status, fixed-order grid.
+// Uses clients_with_credit_totals() RPC: 1 round-trip instead of pulling every
+// generation row in the org just to sum per-client credits client-side.
 import { requireActiveMembership } from '@/lib/auth-helpers'
 import { createClient } from '@/lib/supabase-server'
 import { can } from '@/lib/rbac'
@@ -15,37 +17,40 @@ interface PageProps {
   searchParams: Promise<{ status?: string }>
 }
 
+interface ClientRpcRow {
+  id: string
+  name: string
+  industry: string | null
+  status: string
+  total_credits: string | number
+  generation_count: string | number
+}
+
 export default async function ClientsPage({ searchParams }: PageProps) {
   const membership = await requireActiveMembership()
   const supabase = await createClient()
   const { status: filterStatus } = await searchParams
 
-  // RLS scopes to the user's org. Run both queries in parallel — saves one RTT.
-  const [{ data: clients }, { data: creditRows }] = await Promise.all([
-    supabase.from('clients').select('id, name, industry, status'),
-    supabase
-      .from('generations')
-      .select('client_id, credits')
-      .not('client_id', 'is', null),
-  ])
+  // SINGLE round-trip — RPC aggregates credits server-side via SUM/GROUP BY.
+  // RLS scopes to the user's org. SECURITY INVOKER on the RPC preserves that.
+  const { data: rows, error } = await supabase.rpc('clients_with_credit_totals')
+  if (error) {
+    console.error('[clients] clients_with_credit_totals RPC failed:', error.message)
+  }
 
-  // client_id → { credits, count }
-  const creditMap = new Map<string, { credits: number; count: number }>()
-  ;(creditRows || []).forEach((row) => {
-    if (row.client_id) {
-      const existing = creditMap.get(row.client_id) || { credits: 0, count: 0 }
-      creditMap.set(row.client_id, {
-        credits: existing.credits + parseFloat(row.credits || '0'),
-        count: existing.count + 1,
-      })
-    }
-  })
-
-  const enrichedClients = (clients || []).map((c) => ({
-    ...c,
+  const enrichedClients = ((rows || []) as ClientRpcRow[]).map((c) => ({
+    id: c.id,
+    name: c.name,
+    industry: c.industry,
     status: c.status as ClientStatus,
-    totalCredits: creditMap.get(c.id)?.credits || 0,
-    generationCount: creditMap.get(c.id)?.count || 0,
+    totalCredits:
+      typeof c.total_credits === 'number'
+        ? c.total_credits
+        : parseFloat(c.total_credits || '0'),
+    generationCount:
+      typeof c.generation_count === 'number'
+        ? c.generation_count
+        : parseInt(c.generation_count || '0', 10),
   }))
 
   const statusCounts: Record<ClientStatus, number> = {

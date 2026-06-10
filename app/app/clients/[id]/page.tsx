@@ -1,5 +1,8 @@
 // app/app/clients/[id]/page.tsx — client detail.
 // Back link renders instantly; content streams via Suspense.
+// Uses client_credit_summary + client_works_with_credit_totals +
+// client_work_user_breakdown RPCs to skip pulling every generations row
+// just to aggregate credits client-side.
 import { Suspense } from "react";
 import { requireActiveMembership } from "@/lib/auth-helpers";
 import { createClient } from "@/lib/supabase-server";
@@ -31,6 +34,10 @@ import {
 } from "./work-user-report";
 
 const WORK_ALLOWED_STATUSES: ClientStatus[] = ["trial", "ongoing", "in_talk"];
+const NIL_UUID = "00000000-0000-0000-0000-000000000000";
+// Cap on rows passed to ClientGenerationsTables (paginates client-side @ 50/page).
+// 500 = 10 pages of history. Aggregates come from RPCs so they stay accurate.
+const GENERATIONS_DISPLAY_LIMIT = 500;
 
 const RANGE_DAYS: Record<ClientRange, number | null> = {
   all: null,
@@ -48,6 +55,31 @@ const RANGE_LABEL: Record<ClientRange, string> = {
 interface PageProps {
   params: Promise<{ id: string }>;
   searchParams: Promise<{ range?: string; wstatus?: string }>;
+}
+
+interface ClientWorkRpcRow {
+  id: string;
+  title: string | null;
+  video_type: string | null;
+  status: string;
+  end_date: string | null;
+  max_credits: string | null;
+  creator_id: string;
+  credit_sum: string | number;
+  created_at: string;
+}
+
+interface ClientSummaryRpcRow {
+  total_credits: string | number;
+  generation_count: string | number;
+}
+
+interface WorkUserBreakdownRpcRow {
+  work_id: string;
+  assigned_by: string;
+  actual_credits: string | number;
+  wastage_credits: string | number;
+  rework_credits: string | number;
 }
 
 export default async function ClientDetailPage({
@@ -101,6 +133,7 @@ async function ClientDetailContent({
       ? null
       : new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000).toISOString();
 
+  // WAVE 1 — fetch the client itself.
   const { data: client } = await supabase
     .from("clients")
     .select("id, name, industry, status")
@@ -109,96 +142,132 @@ async function ClientDetailContent({
 
   if (!client) notFound();
 
-  let generationsQuery = supabase
-    .from("generations")
-    .select(
-      "id, display_name, result_url, media_type, credits, hf_created_at, work_id, assigned_at, assigned_by, is_waste, wasted_at, wasted_by, hf_connection_label",
-    )
-    .eq("client_id", id)
-    .order("hf_created_at", { ascending: false });
-  if (fromIso) {
-    generationsQuery = generationsQuery.gte("hf_created_at", fromIso);
-  }
-  const [{ data: generations }, { data: works }] = await Promise.all([
-    generationsQuery,
+  // WAVE 2 — five queries in parallel.
+  // The three RPCs replace the JS reduce loops that walked the entire
+  // generations list. work_creators uses a JOIN-filter so we don't need
+  // a follow-up .in() round-trip after the works query lands.
+  const [
+    { data: summaryRows },
+    { data: workRows, error: worksRpcError },
+    { data: breakdownRows },
+    { data: generations },
+    { data: clientWorkCreators },
+  ] = await Promise.all([
+    supabase.rpc("client_credit_summary", {
+      p_client_id: id,
+      p_from_date: fromIso,
+    }),
+    supabase.rpc("client_works_with_credit_totals", {
+      p_client_id: id,
+      p_from_date: fromIso,
+    }),
+    supabase.rpc("client_work_user_breakdown", {
+      p_client_id: id,
+      p_from_date: fromIso,
+    }),
+    (() => {
+      let q = supabase
+        .from("generations")
+        .select(
+          "id, display_name, result_url, media_type, credits, hf_created_at, work_id, assigned_at, assigned_by, is_waste, wasted_at, wasted_by, hf_connection_label",
+        )
+        .eq("client_id", id)
+        .order("hf_created_at", { ascending: false })
+        .limit(GENERATIONS_DISPLAY_LIMIT);
+      if (fromIso) q = q.gte("hf_created_at", fromIso);
+      return q;
+    })(),
+    // PostgREST inner-join filter: pull every work_creators row whose
+    // parent work belongs to this client — no need to wait on a works
+    // query to derive .in() ids first.
     supabase
-      .from("works")
-      .select(
-        "id, title, video_type, status, end_date, max_credits, creator_id",
-      )
-      .eq("client_id", id)
-      .order("created_at", { ascending: false }),
+      .from("work_creators")
+      .select("work_id, user_id, added_at, works!inner(client_id)")
+      .eq("works.client_id", id)
+      .order("added_at", { ascending: true }),
   ]);
 
-  const clientWorkIds = (works || []).map((w) => w.id);
-  const { data: clientWorkCreators } = clientWorkIds.length
-    ? await supabase
-        .from("work_creators")
-        .select("work_id, user_id, added_at")
-        .in("work_id", clientWorkIds)
-        .order("added_at", { ascending: true })
-    : { data: [] as { work_id: string; user_id: string; added_at: string }[] };
+  if (worksRpcError) {
+    console.error(
+      "[clients/[id]] client_works_with_credit_totals RPC failed:",
+      worksRpcError.message,
+    );
+  }
 
-  const userIds = new Set<string>();
-  (works || []).forEach((w) => userIds.add(w.creator_id));
-  (clientWorkCreators || []).forEach((wc) => userIds.add(wc.user_id));
-  (generations || []).forEach((g) => {
-    if (g.assigned_by) userIds.add(g.assigned_by);
+  // Unwrap RPC totals.
+  const summary = ((summaryRows as ClientSummaryRpcRow[] | null) || [])[0] ?? {
+    total_credits: 0,
+    generation_count: 0,
+  };
+  const totalCredits =
+    typeof summary.total_credits === "number"
+      ? summary.total_credits
+      : parseFloat(String(summary.total_credits) || "0");
+  const summaryGenerationCount =
+    typeof summary.generation_count === "number"
+      ? summary.generation_count
+      : parseInt(String(summary.generation_count) || "0", 10);
+
+  const worksFromRpc = (workRows as ClientWorkRpcRow[] | null) || [];
+  const breakdown = (breakdownRows as WorkUserBreakdownRpcRow[] | null) || [];
+
+  // creditByWork from the RPC (no JS reduce loop over generations).
+  const creditByWork = new Map<string, number>();
+  worksFromRpc.forEach((w) => {
+    creditByWork.set(
+      w.id,
+      typeof w.credit_sum === "number"
+        ? w.credit_sum
+        : parseFloat(String(w.credit_sum) || "0"),
+    );
   });
+
+  // perWorkPerUser map from the RPC.
+  const perWorkPerUser = new Map<
+    string,
+    Map<string, { actual: number; wastage: number; rework: number }>
+  >();
+  breakdown.forEach((row) => {
+    let users = perWorkPerUser.get(row.work_id);
+    if (!users) {
+      users = new Map();
+      perWorkPerUser.set(row.work_id, users);
+    }
+    users.set(row.assigned_by, {
+      actual:
+        typeof row.actual_credits === "number"
+          ? row.actual_credits
+          : parseFloat(String(row.actual_credits) || "0"),
+      wastage:
+        typeof row.wastage_credits === "number"
+          ? row.wastage_credits
+          : parseFloat(String(row.wastage_credits) || "0"),
+      rework:
+        typeof row.rework_credits === "number"
+          ? row.rework_credits
+          : parseFloat(String(row.rework_credits) || "0"),
+    });
+  });
+
+  // Derive all user IDs we need.
+  const userIds = new Set<string>();
+  worksFromRpc.forEach((w) => userIds.add(w.creator_id));
+  (clientWorkCreators || []).forEach((wc) => userIds.add(wc.user_id));
+  breakdown.forEach((b) => userIds.add(b.assigned_by));
   const userIdList = Array.from(userIds);
+
+  // WAVE 3 — single membership query for every derived user.
   const { data: users } = await supabase
     .from("memberships")
     .select("user_id, full_name")
-    .in(
-      "user_id",
-      userIdList.length > 0
-        ? userIdList
-        : ["00000000-0000-0000-0000-000000000000"],
-    );
+    .in("user_id", userIdList.length > 0 ? userIdList : [NIL_UUID]);
   const userNameMap = new Map(
     (users || []).map((u) => [u.user_id, u.full_name]),
   );
 
-  const creditByWork = new Map<string, number>();
-  (generations || []).forEach((g) => {
-    if (g.work_id) {
-      creditByWork.set(
-        g.work_id,
-        (creditByWork.get(g.work_id) || 0) + parseFloat(g.credits || "0"),
-      );
-    }
-  });
-
-  const workStatusMap = new Map<string, WorkStatus>();
-  (works || []).forEach((w) => {
-    workStatusMap.set(w.id, w.status as WorkStatus);
-  });
-  type Bucket = { actual: number; wastage: number; rework: number };
-  const perWorkPerUser = new Map<string, Map<string, Bucket>>();
-  (generations || []).forEach((g) => {
-    if (!g.work_id || !g.assigned_by) return;
-    const credits = parseFloat(g.credits || "0");
-    if (credits <= 0) return;
-    let users = perWorkPerUser.get(g.work_id);
-    if (!users) {
-      users = new Map();
-      perWorkPerUser.set(g.work_id, users);
-    }
-    let bucket = users.get(g.assigned_by);
-    if (!bucket) {
-      bucket = { actual: 0, wastage: 0, rework: 0 };
-      users.set(g.assigned_by, bucket);
-    }
-    if (g.is_waste) {
-      bucket.wastage += credits;
-    } else if (workStatusMap.get(g.work_id) === "rework") {
-      bucket.rework += credits;
-    } else {
-      bucket.actual += credits;
-    }
-  });
-  const reportRows: WorkReportRow[] = (works || []).map((w) => {
-    const userMap = perWorkPerUser.get(w.id) || new Map<string, Bucket>();
+  // Build the WorkUserReport rows.
+  const reportRows: WorkReportRow[] = worksFromRpc.map((w) => {
+    const userMap = perWorkPerUser.get(w.id) || new Map();
     const stats: WorkUserStat[] = Array.from(userMap.entries())
       .map(([userId, b]) => ({
         userId,
@@ -219,13 +288,8 @@ async function ClientDetailContent({
     };
   });
 
-  const totalCredits = (generations || []).reduce(
-    (sum, g) => sum + parseFloat(g.credits || "0"),
-    0,
-  );
-
   const workTitles: Record<string, string> = {};
-  (works || []).forEach((w) => {
+  worksFromRpc.forEach((w) => {
     workTitles[w.id] = w.title || w.video_type || "Untitled work";
   });
 
@@ -236,7 +300,7 @@ async function ClientDetailContent({
     additionalCreatorsByWork.set(wc.work_id, arr);
   });
   const creatorIdsByWork = new Map<string, string[]>();
-  (works || []).forEach((w) => {
+  worksFromRpc.forEach((w) => {
     const fromJoin = additionalCreatorsByWork.get(w.id) || [];
     const others = fromJoin.filter((uid) => uid !== w.creator_id);
     creatorIdsByWork.set(w.id, [w.creator_id, ...others]);
@@ -248,6 +312,11 @@ async function ClientDetailContent({
   const canCreateWork = can(membership.role, "works", "create");
   const isWorkAllowedStatus = WORK_ALLOWED_STATUSES.includes(status);
   const showCreateWork = canCreateWork && isWorkAllowedStatus;
+
+  const visibleWorks =
+    workStatusFilter === "all"
+      ? worksFromRpc
+      : worksFromRpc.filter((w) => w.status === workStatusFilter);
 
   return (
     <>
@@ -304,157 +373,147 @@ async function ClientDetailContent({
           </div>
           <div>
             <div className="text-3xl font-bold text-white">
-              {generations?.length || 0}
+              {summaryGenerationCount}
             </div>
             <div className="text-sm text-neutral-500 mt-1">Generations</div>
           </div>
           <div>
             <div className="text-3xl font-bold text-white">
-              {works?.length || 0}
+              {worksFromRpc.length}
             </div>
             <div className="text-sm text-neutral-500 mt-1">Works (total)</div>
           </div>
         </div>
       </section>
 
-      {(() => {
-        const visibleWorks =
-          workStatusFilter === "all"
-            ? works || []
-            : (works || []).filter((w) => w.status === workStatusFilter);
-        return (
-          <section className="bg-neutral-950 border border-neutral-800 rounded-lg overflow-hidden mb-6">
-            <div className="px-4 py-3 border-b border-neutral-800 flex items-center justify-between gap-2">
-              <div>
-                <h2 className="font-semibold text-white">Works</h2>
-                <p className="text-xs text-neutral-500 mt-0.5">
-                  {visibleWorks.length} of {works?.length || 0}{" "}
-                  {workStatusFilter === "all"
-                    ? "total"
-                    : WORK_STATUS_LABELS[workStatusFilter]}
-                </p>
-                {canCreateWork && !isWorkAllowedStatus && (
-                  <p className="text-xs text-neutral-500 mt-0.5">
-                    Move client to <span className="text-lime-400">Trial</span>,{" "}
-                    <span className="text-lime-400">Ongoing</span>, or{" "}
-                    <span className="text-lime-400">In Talks</span> to add a new
-                    work.
-                  </p>
-                )}
-              </div>
-              <div className="flex items-center gap-2">
-                <WorkStatusFilter current={workStatusFilter} />
-                {showCreateWork && (
-                  <CreateWorkButton
-                    clientId={client.id}
-                    clientName={client.name}
-                  />
-                )}
-              </div>
-            </div>
-            {!works || works.length === 0 ? (
-              <div className="p-8 text-center text-neutral-500">
-                <p>No works yet for this client.</p>
-                {showCreateWork && (
-                  <p className="text-sm mt-1">
-                    Use + Create Work above to add one.
-                  </p>
-                )}
-                {canCreateWork && !isWorkAllowedStatus && (
-                  <p className="text-sm mt-1">
-                    Status is{" "}
-                    <span className="text-neutral-300">
-                      {CLIENT_STATUS_LABELS[status]}
-                    </span>{" "}
-                    — works can only be added on Trial / Ongoing / In Talks
-                    clients.
-                  </p>
-                )}
-              </div>
-            ) : visibleWorks.length === 0 ? (
-              <div className="p-8 text-center text-neutral-500">
-                <p>
-                  No works with status{" "}
-                  <span className="text-neutral-300">
-                    {WORK_STATUS_LABELS[workStatusFilter as WorkStatus]}
-                  </span>
-                  .
-                </p>
-                <p className="text-sm mt-1">
-                  {works.length} other work{works.length === 1 ? "" : "s"} on
-                  this client — clear the filter to see them.
-                </p>
-              </div>
-            ) : (
-              <div className="divide-y divide-neutral-800">
-                {visibleWorks.map((w) => (
-                  <Link
-                    key={w.id}
-                    href={`/app/works/${w.id}`}
-                    className="block px-4 py-3 hover:bg-neutral-900/60 transition-colors"
-                  >
-                    <div className="flex items-center justify-between gap-4">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="font-medium text-white">
-                            {w.title || w.video_type || "Untitled work"}
-                          </span>
-                          <span
-                            className={`text-xs px-2 py-0.5 rounded border ${WORK_STATUS_COLORS[w.status as WorkStatus]}`}
-                          >
-                            {WORK_STATUS_LABELS[w.status as WorkStatus]}
-                          </span>
-                        </div>
-                        <div className="text-xs text-neutral-500">
-                          {w.video_type && <span>{w.video_type} · </span>}
-                          {(() => {
-                            const ids = creatorIdsByWork.get(w.id) || [
-                              w.creator_id,
-                            ];
-                            const names = ids.map(
-                              (uid) => userNameMap.get(uid) || "Unknown",
-                            );
-                            const label =
-                              names.length === 1
-                                ? "Creator"
-                                : `Creators (${names.length})`;
-                            const display =
-                              names.length <= 2
-                                ? names.join(", ")
-                                : `${names.slice(0, 2).join(", ")} +${names.length - 2}`;
-                            return `${label}: ${display}`;
-                          })()}
-                          {w.end_date && (
-                            <span>
-                              {" "}
-                              · Due{" "}
-                              {new Date(w.end_date).toLocaleDateString("en-US")}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-sm font-bold text-white">
-                          {(creditByWork.get(w.id) || 0).toFixed(1)}
-                          {w.max_credits && (
-                            <span className="text-neutral-500 text-xs">
-                              {" "}
-                              / {w.max_credits}
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-xs text-neutral-500">
-                          credits · {RANGE_LABEL[range]}
-                        </div>
-                      </div>
-                    </div>
-                  </Link>
-                ))}
-              </div>
+      <section className="bg-neutral-950 border border-neutral-800 rounded-lg overflow-hidden mb-6">
+        <div className="px-4 py-3 border-b border-neutral-800 flex items-center justify-between gap-2">
+          <div>
+            <h2 className="font-semibold text-white">Works</h2>
+            <p className="text-xs text-neutral-500 mt-0.5">
+              {visibleWorks.length} of {worksFromRpc.length}{" "}
+              {workStatusFilter === "all"
+                ? "total"
+                : WORK_STATUS_LABELS[workStatusFilter]}
+            </p>
+            {canCreateWork && !isWorkAllowedStatus && (
+              <p className="text-xs text-neutral-500 mt-0.5">
+                Move client to <span className="text-lime-400">Trial</span>,{" "}
+                <span className="text-lime-400">Ongoing</span>, or{" "}
+                <span className="text-lime-400">In Talks</span> to add a new
+                work.
+              </p>
             )}
-          </section>
-        );
-      })()}
+          </div>
+          <div className="flex items-center gap-2">
+            <WorkStatusFilter current={workStatusFilter} />
+            {showCreateWork && (
+              <CreateWorkButton
+                clientId={client.id}
+                clientName={client.name}
+              />
+            )}
+          </div>
+        </div>
+        {worksFromRpc.length === 0 ? (
+          <div className="p-8 text-center text-neutral-500">
+            <p>No works yet for this client.</p>
+            {showCreateWork && (
+              <p className="text-sm mt-1">
+                Use + Create Work above to add one.
+              </p>
+            )}
+            {canCreateWork && !isWorkAllowedStatus && (
+              <p className="text-sm mt-1">
+                Status is{" "}
+                <span className="text-neutral-300">
+                  {CLIENT_STATUS_LABELS[status]}
+                </span>{" "}
+                — works can only be added on Trial / Ongoing / In Talks
+                clients.
+              </p>
+            )}
+          </div>
+        ) : visibleWorks.length === 0 ? (
+          <div className="p-8 text-center text-neutral-500">
+            <p>
+              No works with status{" "}
+              <span className="text-neutral-300">
+                {WORK_STATUS_LABELS[workStatusFilter as WorkStatus]}
+              </span>
+              .
+            </p>
+            <p className="text-sm mt-1">
+              {worksFromRpc.length} other work{worksFromRpc.length === 1 ? "" : "s"} on
+              this client — clear the filter to see them.
+            </p>
+          </div>
+        ) : (
+          <div className="divide-y divide-neutral-800">
+            {visibleWorks.map((w) => (
+              <Link
+                key={w.id}
+                href={`/app/works/${w.id}`}
+                className="block px-4 py-3 hover:bg-neutral-900/60 transition-colors"
+              >
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="font-medium text-white">
+                        {w.title || w.video_type || "Untitled work"}
+                      </span>
+                      <span
+                        className={`text-xs px-2 py-0.5 rounded border ${WORK_STATUS_COLORS[w.status as WorkStatus]}`}
+                      >
+                        {WORK_STATUS_LABELS[w.status as WorkStatus]}
+                      </span>
+                    </div>
+                    <div className="text-xs text-neutral-500">
+                      {w.video_type && <span>{w.video_type} · </span>}
+                      {(() => {
+                        const ids = creatorIdsByWork.get(w.id) || [w.creator_id];
+                        const names = ids.map(
+                          (uid) => userNameMap.get(uid) || "Unknown",
+                        );
+                        const label =
+                          names.length === 1
+                            ? "Creator"
+                            : `Creators (${names.length})`;
+                        const display =
+                          names.length <= 2
+                            ? names.join(", ")
+                            : `${names.slice(0, 2).join(", ")} +${names.length - 2}`;
+                        return `${label}: ${display}`;
+                      })()}
+                      {w.end_date && (
+                        <span>
+                          {" "}
+                          · Due{" "}
+                          {new Date(w.end_date).toLocaleDateString("en-US")}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-sm font-bold text-white">
+                      {(creditByWork.get(w.id) || 0).toFixed(1)}
+                      {w.max_credits && (
+                        <span className="text-neutral-500 text-xs">
+                          {" "}
+                          / {w.max_credits}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-xs text-neutral-500">
+                      credits · {RANGE_LABEL[range]}
+                    </div>
+                  </div>
+                </div>
+              </Link>
+            ))}
+          </div>
+        )}
+      </section>
 
       <WorkUserReport rows={reportRows} rangeLabel={RANGE_LABEL[range]} />
 
