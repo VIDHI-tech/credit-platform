@@ -17,6 +17,7 @@ import {
   WastageButton,
 } from '@/app/app/works/[id]/assign-tables'
 import Link from 'next/link'
+import { PaginationButtons, paginate } from '@/components/ui/pagination-buttons'
 
 interface Generation {
   id: string
@@ -56,6 +57,11 @@ export function ClientGenerationsTables({
   const assigned = generations.filter((g) => !g.is_waste)
   const wasted = generations.filter((g) => g.is_waste)
 
+  const [assignedPage, setAssignedPage] = useState(1)
+  const [wastedPage, setWastedPage] = useState(1)
+  const aPag = paginate(assigned, assignedPage)
+  const wPag = paginate(wasted, wastedPage)
+
   return (
     <div className="space-y-3 mb-6">
       {error && (
@@ -87,10 +93,11 @@ export function ClientGenerationsTables({
               <p>Nothing assigned to {clientName} yet.</p>
             </div>
           ) : (
-            <div className="max-h-[500px] overflow-auto">
-              <table className="w-full text-xs">
-                <tbody className="divide-y divide-neutral-800">
-                  {assigned.map((g) => (
+            <div className="flex flex-col overflow-hidden">
+              <div className="flex-1 overflow-auto">
+                <table className="w-full text-xs">
+                  <tbody className="divide-y divide-neutral-800">
+                    {aPag.slice.map((g) => (
                     <tr key={g.id} className="hover:bg-neutral-900/60">
                       <td className="px-2 py-2">
                         <MediaPreview
@@ -148,7 +155,9 @@ export function ClientGenerationsTables({
                     </tr>
                   ))}
                 </tbody>
-              </table>
+                </table>
+              </div>
+              <PaginationButtons page={aPag.page} totalPages={aPag.totalPages} total={aPag.total} onPageChange={setAssignedPage} />
             </div>
           )}
         </div>
@@ -176,10 +185,11 @@ export function ClientGenerationsTables({
               <p>No wastage yet.</p>
             </div>
           ) : (
-            <div className="max-h-[500px] overflow-auto">
-              <table className="w-full text-xs">
-                <tbody className="divide-y divide-neutral-800">
-                  {wasted.map((g) => (
+            <div className="flex flex-col overflow-hidden">
+              <div className="flex-1 overflow-auto">
+                <table className="w-full text-xs">
+                  <tbody className="divide-y divide-neutral-800">
+                    {wPag.slice.map((g) => (
                     <tr
                       key={g.id}
                       className="bg-red-950/10 hover:bg-red-950/20"
@@ -233,7 +243,9 @@ export function ClientGenerationsTables({
                     </tr>
                   ))}
                 </tbody>
-              </table>
+                </table>
+              </div>
+              <PaginationButtons page={wPag.page} totalPages={wPag.totalPages} total={wPag.total} onPageChange={setWastedPage} />
             </div>
           )}
         </div>

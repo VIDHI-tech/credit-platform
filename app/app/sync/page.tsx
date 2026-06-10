@@ -24,6 +24,7 @@ import {
   UnassignButton,
   WastageButton,
 } from '@/app/app/works/[id]/assign-tables'
+import { PaginationButtons, paginate } from '@/components/ui/pagination-buttons'
 
 interface Client {
   id: string
@@ -90,6 +91,9 @@ export default function SyncPage() {
   const [userId, setUserId] = useState<string>('')
   const [accessibleAccounts, setAccessibleAccounts] = useState<AccessibleAccount[]>([])
   const [selectedAccountFilter, setSelectedAccountFilter] = useState<string | null>(null)
+  const [unassignedPage, setUnassignedPage] = useState(1)
+  const [assignedPage, setAssignedPage] = useState(1)
+  const [wastedPage, setWastedPage] = useState(1)
 
   const [, startTransition] = useTransition()
   const [supabase] = useState(() => createClient())
@@ -166,6 +170,9 @@ export default function SyncPage() {
     setUnassigned(all.filter((g) => !g.client_id))
     setAssigned(all.filter((g) => g.client_id && !g.is_waste))
     setWasted(all.filter((g) => g.is_waste))
+    setUnassignedPage(1)
+    setAssignedPage(1)
+    setWastedPage(1)
   }, [supabase])
 
   useEffect(() => {
@@ -287,6 +294,10 @@ export default function SyncPage() {
   const visibleUnassigned = selectedAccountFilter
     ? unassigned.filter((g) => g.hf_connection_label === selectedAccountFilter)
     : unassigned
+
+  const uPag = paginate(visibleUnassigned, unassignedPage)
+  const aPag = paginate(assigned, assignedPage)
+  const wPag = paginate(wasted, wastedPage)
 
   const clientNameMap: Record<string, string> = {}
   clients.forEach((c) => {
@@ -444,7 +455,7 @@ export default function SyncPage() {
             <span className="text-xs text-neutral-500">Filter by account:</span>
             <button
               type="button"
-              onClick={() => setSelectedAccountFilter(null)}
+              onClick={() => { setSelectedAccountFilter(null); setUnassignedPage(1) }}
               className={`text-xs px-2 py-1 rounded transition-colors ${
                 selectedAccountFilter === null
                   ? 'bg-lime-400 text-black'
@@ -457,7 +468,7 @@ export default function SyncPage() {
               <button
                 key={acc.id}
                 type="button"
-                onClick={() => setSelectedAccountFilter(acc.label)}
+                onClick={() => { setSelectedAccountFilter(acc.label); setUnassignedPage(1) }}
                 className={`text-xs px-2 py-1 rounded transition-colors ${
                   selectedAccountFilter === acc.label
                     ? 'bg-lime-400 text-black'
@@ -477,8 +488,9 @@ export default function SyncPage() {
             <p className="text-sm mt-1">Click Sync to load your history.</p>
           </div>
         ) : (
-          <div className="overflow-auto max-h-[600px]">
-            <table className="w-full text-sm">
+          <div className="flex flex-col overflow-hidden">
+            <div className="flex-1 overflow-auto">
+              <table className="w-full text-sm">
               <thead className="bg-neutral-900 sticky top-0">
                 <tr>
                   <th className="text-left px-3 py-2 text-neutral-400 w-20">
@@ -502,7 +514,7 @@ export default function SyncPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-neutral-800">
-                {visibleUnassigned.map((gen) => {
+                {uPag.slice.map((gen) => {
                   const choice = rowOf(gen.id)
                   const busy = rowBusy[gen.id] || null
                   const visibleWorks = worksFor(choice.clientFilter)
@@ -654,7 +666,9 @@ export default function SyncPage() {
                   )
                 })}
               </tbody>
-            </table>
+              </table>
+            </div>
+            <PaginationButtons page={uPag.page} totalPages={uPag.totalPages} total={uPag.total} onPageChange={setUnassignedPage} />
           </div>
         )}
       </div>
@@ -681,10 +695,11 @@ export default function SyncPage() {
               <p>Nothing assigned yet.</p>
             </div>
           ) : (
-            <div className="max-h-[500px] overflow-auto">
-              <table className="w-full text-xs">
-                <tbody className="divide-y divide-neutral-800">
-                  {assigned.map((g) => (
+            <div className="flex flex-col overflow-hidden">
+              <div className="flex-1 overflow-auto">
+                <table className="w-full text-xs">
+                  <tbody className="divide-y divide-neutral-800">
+                    {aPag.slice.map((g) => (
                     <tr key={g.id} className="hover:bg-neutral-900/60">
                       <td className="px-2 py-2">
                         <MediaPreview
@@ -764,7 +779,9 @@ export default function SyncPage() {
                     </tr>
                   ))}
                 </tbody>
-              </table>
+                </table>
+              </div>
+              <PaginationButtons page={aPag.page} totalPages={aPag.totalPages} total={aPag.total} onPageChange={setAssignedPage} />
             </div>
           )}
         </div>
@@ -798,10 +815,11 @@ export default function SyncPage() {
               <p>No wastage yet.</p>
             </div>
           ) : (
-            <div className="max-h-[500px] overflow-auto">
-              <table className="w-full text-xs">
-                <tbody className="divide-y divide-neutral-800">
-                  {wasted.map((g) => (
+            <div className="flex flex-col overflow-hidden">
+              <div className="flex-1 overflow-auto">
+                <table className="w-full text-xs">
+                  <tbody className="divide-y divide-neutral-800">
+                    {wPag.slice.map((g) => (
                     <tr
                       key={g.id}
                       className="bg-red-950/10 hover:bg-red-950/20"
@@ -871,7 +889,9 @@ export default function SyncPage() {
                     </tr>
                   ))}
                 </tbody>
-              </table>
+                </table>
+              </div>
+              <PaginationButtons page={wPag.page} totalPages={wPag.totalPages} total={wPag.total} onPageChange={setWastedPage} />
             </div>
           )}
         </div>

@@ -25,6 +25,7 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase-browser'
 import { Button } from '@/components/ui/button'
 import { Check, X, RefreshCw } from 'lucide-react'
+import { PaginationButtons, paginate } from '@/components/ui/pagination-buttons'
 
 interface UnassignedGeneration {
   id: string
@@ -114,6 +115,7 @@ export function SyncAndAssign({
   const [loadingUnassigned, setLoadingUnassigned] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [accountFilter, setAccountFilter] = useState<string | null>(null)
+  const [pickerPage, setPickerPage] = useState(1)
 
   // Modal B — destination. Always THIS work; no picker. The "+ Sync & Assign"
   // flow on the work detail page is scoped to this work by design.
@@ -148,6 +150,7 @@ export function SyncAndAssign({
     setUnassigned([]) // clear stale rows so shimmer takes over cleanly
     setSelectedIds(new Set())
     setAccountFilter(null)
+    setPickerPage(1)
     setPickerOpen(true)
 
     try {
@@ -194,6 +197,8 @@ export function SyncAndAssign({
   const visibleUnassigned = accountFilter
     ? unassigned.filter((g) => g.hf_connection_label === accountFilter)
     : unassigned
+
+  const pPag = paginate(visibleUnassigned, pickerPage)
 
   // Total credits in the unassigned picker
   const totalUnassignedCredits = visibleUnassigned.reduce(
@@ -478,7 +483,7 @@ export function SyncAndAssign({
                   </span>
                   <button
                     type="button"
-                    onClick={() => setAccountFilter(null)}
+                    onClick={() => { setAccountFilter(null); setPickerPage(1) }}
                     className={`text-xs px-2 py-0.5 rounded transition-colors ${
                       accountFilter === null
                         ? 'bg-lime-400 text-black'
@@ -491,7 +496,7 @@ export function SyncAndAssign({
                     <button
                       key={label}
                       type="button"
-                      onClick={() => setAccountFilter(label)}
+                      onClick={() => { setAccountFilter(label); setPickerPage(1) }}
                       className={`text-xs px-2 py-0.5 rounded transition-colors ${
                         accountFilter === label
                           ? 'bg-lime-400 text-black'
@@ -515,8 +520,9 @@ export function SyncAndAssign({
             </div>
 
             {/* LIST */}
-            <div className="flex-1 overflow-auto">
-              {syncError ? (
+            <div className="flex-1 flex flex-col overflow-hidden">
+              <div className="flex-1 overflow-auto">
+                {syncError ? (
                 <div className="p-4">
                   <div className="bg-red-950/50 border border-red-800 text-red-300 px-3 py-3 rounded text-sm flex items-start justify-between gap-3">
                     <div className="min-w-0">
@@ -592,7 +598,7 @@ export function SyncAndAssign({
               ) : (
                 <table className="w-full text-xs">
                   <tbody className="divide-y divide-neutral-800">
-                    {visibleUnassigned.map((g) => {
+                    {pPag.slice.map((g) => {
                       const checked = selectedIds.has(g.id)
                       return (
                         <tr
@@ -655,6 +661,10 @@ export function SyncAndAssign({
                     })}
                   </tbody>
                 </table>
+              )}
+              </div>
+              {!syncError && !syncing && !loadingUnassigned && visibleUnassigned.length > 0 && (
+                <PaginationButtons page={pPag.page} totalPages={pPag.totalPages} total={pPag.total} onPageChange={setPickerPage} />
               )}
             </div>
           </div>

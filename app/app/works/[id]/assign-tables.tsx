@@ -20,6 +20,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Undo2 } from 'lucide-react'
 import type { WorkStatus } from '@/lib/work-helpers'
+import { PaginationButtons, paginate } from '@/components/ui/pagination-buttons'
 
 // Per spec: 60-second window for unassign-undo / mark-useful-undo.
 // Kept in sync with the same threshold on the unassign + waste API routes.
@@ -304,6 +305,11 @@ export function AssignTables({
   const assignedToThisWork = assignedUseful.filter((g) => g.work_id === workId)
   const assignedElsewhere = assignedUseful.filter((g) => g.work_id !== workId)
 
+  const [assignedPage, setAssignedPage] = useState(1)
+  const [wastedPage, setWastedPage] = useState(1)
+  const aPag = paginate(assignedUseful, assignedPage)
+  const wPag = paginate(wasted, wastedPage)
+
   // Total credits per bucket
   const totalAssignedCredits = assignedUseful.reduce(
     (s, g) => s + parseFloat(g.credits || '0'),
@@ -367,10 +373,11 @@ export function AssignTables({
               <p>Nothing assigned to {clientName} yet.</p>
             </div>
           ) : (
-            <div className="max-h-[500px] overflow-auto">
-              <table className="w-full text-xs">
-                <tbody className="divide-y divide-neutral-800">
-                  {assignedUseful.map((g) => (
+            <div className="flex flex-col overflow-hidden">
+              <div className="flex-1 overflow-auto">
+                <table className="w-full text-xs">
+                  <tbody className="divide-y divide-neutral-800">
+                    {aPag.slice.map((g) => (
                     <tr
                       key={g.id}
                       className={g.work_id === workId ? 'bg-lime-950/20' : ''}
@@ -425,7 +432,9 @@ export function AssignTables({
                     </tr>
                   ))}
                 </tbody>
-              </table>
+                </table>
+              </div>
+              <PaginationButtons page={aPag.page} totalPages={aPag.totalPages} total={aPag.total} onPageChange={setAssignedPage} />
             </div>
           )}
         </div>
@@ -458,13 +467,14 @@ export function AssignTables({
               <p>No wastage yet.</p>
             </div>
           ) : (
-            <div className="max-h-[500px] overflow-auto">
-              <table className="w-full text-xs">
-                <tbody className="divide-y divide-neutral-800">
-                  {wasted.map((g) => (
-                    <tr
-                      key={g.id}
-                      className="bg-red-950/10 hover:bg-red-950/20"
+            <div className="flex flex-col overflow-hidden">
+              <div className="flex-1 overflow-auto">
+                <table className="w-full text-xs">
+                  <tbody className="divide-y divide-neutral-800">
+                    {wPag.slice.map((g) => (
+                      <tr
+                        key={g.id}
+                        className="bg-red-950/10 hover:bg-red-950/20"
                     >
                       <td className="px-2 py-2">
                         <MediaPreview
@@ -518,7 +528,9 @@ export function AssignTables({
                     </tr>
                   ))}
                 </tbody>
-              </table>
+                </table>
+              </div>
+              <PaginationButtons page={wPag.page} totalPages={wPag.totalPages} total={wPag.total} onPageChange={setWastedPage} />
             </div>
           )}
         </div>
