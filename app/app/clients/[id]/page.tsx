@@ -124,7 +124,6 @@ async function ClientDetailContent({
   range: ClientRange;
   workStatusFilter: WorkStatus | "all";
 }) {
-  const membership = await requireActiveMembership();
   const supabase = await createClient();
 
   const daysBack = RANGE_DAYS[range];
@@ -133,25 +132,30 @@ async function ClientDetailContent({
       ? null
       : new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000).toISOString();
 
-  // WAVE 1 — fetch the client itself.
-  const { data: client } = await supabase
-    .from("clients")
-    .select("id, name, industry, status")
-    .eq("id", id)
-    .maybeSingle();
+  // WAVE 1 — auth + client fetch in parallel. RLS validates the JWT
+  // from cookies independently, so the client query works while auth resolves.
+  const [membership, { data: client }] = await Promise.all([
+    requireActiveMembership(),
+    supabase
+      .from("clients")
+      .select("id, name, industry, status")
+      .eq("id", id)
+      .maybeSingle(),
+  ]);
 
   if (!client) notFound();
 
-  // WAVE 2 — five queries in parallel.
-  // The three RPCs replace the JS reduce loops that walked the entire
-  // generations list. work_creators uses a JOIN-filter so we don't need
-  // a follow-up .in() round-trip after the works query lands.
+  // WAVE 2 — ALL remaining queries in parallel, including memberships.
+  // Fetching all org memberships (RLS-scoped) avoids a 3rd wave to
+  // resolve user IDs derived from this wave's results.
   const [
     { data: summaryRows },
     { data: workRows, error: worksRpcError },
     { data: breakdownRows },
     { data: generations },
     { data: clientWorkCreators },
+    { data: allMembers },
+    { data: hfConns },
   ] = await Promise.all([
     supabase.rpc("client_credit_summary", {
       p_client_id: id,
@@ -177,14 +181,17 @@ async function ClientDetailContent({
       if (fromIso) q = q.gte("hf_created_at", fromIso);
       return q;
     })(),
-    // PostgREST inner-join filter: pull every work_creators row whose
-    // parent work belongs to this client — no need to wait on a works
-    // query to derive .in() ids first.
     supabase
       .from("work_creators")
       .select("work_id, user_id, added_at, works!inner(client_id)")
       .eq("works.client_id", id)
       .order("added_at", { ascending: true }),
+    supabase.from("memberships").select("user_id, full_name"),
+    supabase
+      .from("hf_connections")
+      .select("label")
+      .eq("is_active", true)
+      .order("created_at", { ascending: true }),
   ]);
 
   if (worksRpcError) {
@@ -249,21 +256,11 @@ async function ClientDetailContent({
     });
   });
 
-  // Derive all user IDs we need.
-  const userIds = new Set<string>();
-  worksFromRpc.forEach((w) => userIds.add(w.creator_id));
-  (clientWorkCreators || []).forEach((wc) => userIds.add(wc.user_id));
-  breakdown.forEach((b) => userIds.add(b.assigned_by));
-  const userIdList = Array.from(userIds);
-
-  // WAVE 3 — single membership query for every derived user.
-  const { data: users } = await supabase
-    .from("memberships")
-    .select("user_id, full_name")
-    .in("user_id", userIdList.length > 0 ? userIdList : [NIL_UUID]);
   const userNameMap = new Map(
-    (users || []).map((u) => [u.user_id, u.full_name]),
+    (allMembers || []).map((u) => [u.user_id, u.full_name]),
   );
+
+  const accountLabels = (hfConns as { label: string }[] || []).map((c) => c.label);
 
   // Build the WorkUserReport rows.
   const reportRows: WorkReportRow[] = worksFromRpc.map((w) => {
@@ -537,6 +534,7 @@ async function ClientDetailContent({
         workTitles={workTitles}
         userRole={membership.role as "master" | "manager" | "creator"}
         userId={membership.user_id}
+        accountLabels={accountLabels}
       />
 
       {canDelete && (

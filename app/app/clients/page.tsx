@@ -27,13 +27,15 @@ interface ClientRpcRow {
 }
 
 export default async function ClientsPage({ searchParams }: PageProps) {
-  const membership = await requireActiveMembership()
   const supabase = await createClient()
   const { status: filterStatus } = await searchParams
 
-  // SINGLE round-trip — RPC aggregates credits server-side via SUM/GROUP BY.
-  // RLS scopes to the user's org. SECURITY INVOKER on the RPC preserves that.
-  const { data: rows, error } = await supabase.rpc('clients_with_credit_totals')
+  // SINGLE WAVE — auth + RPC in parallel. RLS validates the JWT from
+  // cookies independently, so the RPC returns correct results while auth resolves.
+  const [membership, { data: rows, error }] = await Promise.all([
+    requireActiveMembership(),
+    supabase.rpc('clients_with_credit_totals'),
+  ])
   if (error) {
     console.error('[clients] clients_with_credit_totals RPC failed:', error.message)
   }

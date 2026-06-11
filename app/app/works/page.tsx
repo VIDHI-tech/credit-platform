@@ -52,24 +52,26 @@ interface WorkRpcRow {
 }
 
 async function WorksContent({ initialFilterStatus }: { initialFilterStatus?: string }) {
-  const membership = await requireActiveMembership();
   const supabase = await createClient();
 
-  // WAVE 1 — all three queries fire in parallel.
-  // - works_with_credit_totals() RPC = works rows + per-work credit sum (no more pulling every generation row)
-  // - clients query
-  // - work_creators is org-scoped via RLS, so no need to .in() filter
+  // SINGLE WAVE — auth + all data queries fire in parallel.
+  // RLS validates the JWT from cookies independently of auth.getUser(),
+  // so data queries return correct org-scoped results while auth resolves.
   const [
+    membership,
     { data: worksRaw, error: worksError },
     { data: allClients },
     { data: workCreators },
+    { data: allMembers },
   ] = await Promise.all([
+    requireActiveMembership(),
     supabase.rpc("works_with_credit_totals"),
     supabase.from("clients").select("id, name, status").order("name"),
     supabase
       .from("work_creators")
       .select("work_id, user_id, added_at")
       .order("added_at", { ascending: true }),
+    supabase.from("memberships").select("user_id, full_name"),
   ]);
 
   if (worksError) {
@@ -77,18 +79,6 @@ async function WorksContent({ initialFilterStatus }: { initialFilterStatus?: str
   }
 
   const works = (worksRaw || []) as WorkRpcRow[];
-
-  // Derive every creator ID we'll need from wave 1 results — no extra round trip.
-  const creatorIdSet = new Set<string>();
-  works.forEach((w) => creatorIdSet.add(w.creator_id));
-  (workCreators || []).forEach((wc) => creatorIdSet.add(wc.user_id));
-  const creatorIds = Array.from(creatorIdSet);
-
-  // WAVE 2 — single query for all creator names.
-  const { data: creators } = await supabase
-    .from("memberships")
-    .select("user_id, full_name")
-    .in("user_id", creatorIds.length ? creatorIds : [PLACEHOLDER]);
 
   // Build lookup maps.
   const clientNameMap: Record<string, string> = {};
@@ -98,8 +88,8 @@ async function WorksContent({ initialFilterStatus }: { initialFilterStatus?: str
     clientStatusMap[c.id] = c.status;
   });
   const creatorNameMap: Record<string, string> = {};
-  (creators || []).forEach((c) => {
-    creatorNameMap[c.user_id] = c.full_name;
+  (allMembers || []).forEach((m) => {
+    creatorNameMap[m.user_id] = m.full_name;
   });
 
   // Credit map straight from the RPC — no JS reduce over generations.

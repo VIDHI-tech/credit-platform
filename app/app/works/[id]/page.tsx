@@ -53,24 +53,27 @@ export default async function WorkDetailPage({ params }: PageProps) {
 }
 
 async function WorkDetailContent({ id }: { id: string }) {
-  const membership = await requireActiveMembership();
   const supabase = await createClient();
 
-  // WAVE 1 — fetch the work itself. We need work.client_id before we can fire
-  // the next wave's client-scoped queries.
-  const { data: work } = await supabase
-    .from("works")
-    .select(
-      "id, title, video_type, status, start_date, end_date, start_time, end_time, max_credits, client_id, creator_id, instructions_path, notes",
-    )
-    .eq("id", id)
-    .maybeSingle();
+  // WAVE 1 — auth + work fetch in parallel. RLS validates the JWT from
+  // cookies independently, so the work query returns correct results
+  // while auth resolves.
+  const [membership, { data: work }] = await Promise.all([
+    requireActiveMembership(),
+    supabase
+      .from("works")
+      .select(
+        "id, title, video_type, status, start_date, end_date, start_time, end_time, max_credits, client_id, creator_id, instructions_path, notes",
+      )
+      .eq("id", id)
+      .maybeSingle(),
+  ]);
 
   if (!work) notFound();
 
-  // WAVE 2 — six queries in parallel.
-  // The two RPCs (credit total + per-creator breakdown) replace the JS
-  // reduce loops that used to walk the entire assignedToClient list.
+  // WAVE 2 — ALL remaining queries in parallel, including memberships.
+  // Fetching all org memberships (RLS-scoped) and all client works avoids
+  // a 3rd wave to resolve user IDs / work IDs derived from this wave.
   const [
     { data: client },
     { data: workCreators },
@@ -78,6 +81,9 @@ async function WorkDetailContent({ id }: { id: string }) {
     { data: workCreditTotal },
     { data: creatorBreakdown },
     { data: instructionsBlob },
+    { data: allMemberships },
+    { data: clientWorks },
+    { data: hfConns },
   ] = await Promise.all([
     supabase
       .from("clients")
@@ -107,39 +113,19 @@ async function WorkDetailContent({ id }: { id: string }) {
           .from("work-instructions")
           .download(work.instructions_path)
       : Promise.resolve({ data: null }),
+    supabase.from("memberships").select("user_id, full_name"),
+    supabase.from("works").select("id, status").eq("client_id", work.client_id),
+    supabase
+      .from("hf_connections")
+      .select("label")
+      .eq("is_active", true)
+      .order("created_at", { ascending: true }),
   ]);
 
-  // Derive every user_id we need (creators + assigners) from wave 2 results
-  // so wave 3 can pull all memberships in ONE call.
   const additionalCreatorIds = (workCreators || [])
     .map((r) => r.user_id as string)
     .filter((uid) => uid !== work.creator_id);
   const creatorIdList = [work.creator_id, ...additionalCreatorIds];
-
-  const referencedWorkIds = Array.from(
-    new Set(
-      (assignedToClient || [])
-        .map((g) => g.work_id)
-        .filter((wid): wid is string => Boolean(wid)),
-    ),
-  );
-  const assignerIds = ((creatorBreakdown as { assigned_by: string }[] | null) || [])
-    .map((r) => r.assigned_by)
-    .filter(Boolean);
-
-  const allUserIds = Array.from(new Set([...creatorIdList, ...assignerIds]));
-
-  // WAVE 3 — memberships for all user ids + work statuses for related works.
-  const [{ data: allMemberships }, { data: relatedWorks }] = await Promise.all([
-    supabase
-      .from("memberships")
-      .select("user_id, full_name")
-      .in("user_id", allUserIds.length ? allUserIds : [NIL_UUID]),
-    supabase
-      .from("works")
-      .select("id, status")
-      .in("id", referencedWorkIds.length ? referencedWorkIds : [NIL_UUID]),
-  ]);
 
   const nameMap = new Map(
     (allMemberships || []).map((m) => [m.user_id, m.full_name]),
@@ -152,8 +138,10 @@ async function WorkDetailContent({ id }: { id: string }) {
   }));
 
   const workStatusMap: Record<string, WorkStatus> = Object.fromEntries(
-    (relatedWorks || []).map((w) => [w.id, w.status as WorkStatus]),
+    (clientWorks || []).map((w) => [w.id, w.status as WorkStatus]),
   );
+
+  const accountLabels = (hfConns as { label: string }[] || []).map((c) => c.label);
 
   // creatorStats comes directly from the RPC — no JS reduce loop.
   const creatorStats = (
@@ -369,6 +357,7 @@ async function WorkDetailContent({ id }: { id: string }) {
           clientName={client?.name || ""}
           userRole={membership.role as "master" | "manager" | "creator"}
           creatorStats={creatorStats}
+          accountLabels={accountLabels}
         />
       </div>
 
@@ -404,6 +393,7 @@ async function WorkDetailContent({ id }: { id: string }) {
         workStatusMap={workStatusMap}
         userRole={membership.role as "master" | "manager" | "creator"}
         userId={membership.user_id}
+        accountLabels={accountLabels}
       />
     </>
   );

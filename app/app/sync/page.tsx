@@ -161,7 +161,8 @@ export default function SyncPage() {
         .select(
           'id, external_id, display_name, job_set_type, result_url, media_type, prompt, credits, hf_created_at, client_id, work_id, assigned_at, assigned_by, is_waste, wasted_at, wasted_by, hf_connection_label',
         )
-        .order('hf_created_at', { ascending: false }),
+        .order('hf_created_at', { ascending: false })
+        .limit(5000),
     ])
 
     setClients(clientData || [])

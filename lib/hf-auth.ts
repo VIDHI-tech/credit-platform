@@ -19,7 +19,7 @@ async function fetchRetry(
       return await fetch(input, init)
     } catch (error) {
       lastError = error
-      await new Promise((r) => setTimeout(r, 400 * (attempt + 1)))
+      await new Promise((r) => setTimeout(r, 150 * (attempt + 1)))
     }
   }
   throw lastError

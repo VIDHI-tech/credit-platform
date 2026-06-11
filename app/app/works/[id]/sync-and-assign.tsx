@@ -56,6 +56,8 @@ interface Props {
   userRole: 'master' | 'manager' | 'creator'
   /** Per-creator credit breakdown rendered above the Sync button. */
   creatorStats: CreatorStat[]
+  /** All connected HF account labels (from hf_connections). */
+  accountLabels: string[]
 }
 
 function MediaPreview({
@@ -95,6 +97,7 @@ export function SyncAndAssign({
   clientName,
   userRole,
   creatorStats,
+  accountLabels,
 }: Props) {
   const router = useRouter()
   const [supabase] = useState(() => createClient())
@@ -125,8 +128,8 @@ export function SyncAndAssign({
 
   // Load the unassigned list (called after a successful sync and any time the
   // modal needs a refresh — e.g. on first manual open if user clicks again).
-  const loadUnassigned = useCallback(async () => {
-    setLoadingUnassigned(true)
+  const loadUnassigned = useCallback(async (silent = false) => {
+    if (!silent) setLoadingUnassigned(true)
     const { data } = await supabase
       .from('generations')
       .select(
@@ -134,25 +137,26 @@ export function SyncAndAssign({
       )
       .is('client_id', null)
       .order('hf_created_at', { ascending: false })
-    // Exclude already-wasted entries — they belong to the Wastage table below.
+      .limit(5000)
     const useful = (data || []).filter((g) => !g.is_waste)
     setUnassigned(useful as UnassignedGeneration[])
-    setLoadingUnassigned(false)
+    if (!silent) setLoadingUnassigned(false)
   }, [supabase])
 
   async function handleSync() {
-    // Open the picker IMMEDIATELY so the user sees feedback. The modal
-    // renders shimmer rows while the sync is in flight; real rows replace
-    // the shimmer once loadUnassigned() finishes.
-    setSyncing(true)
     setSyncError(null)
     setSyncMessage(null)
-    setUnassigned([]) // clear stale rows so shimmer takes over cleanly
     setSelectedIds(new Set())
     setAccountFilter(null)
     setPickerPage(1)
     setPickerOpen(true)
 
+    // Phase 1: Load existing unassigned data from DB (fast, ~500ms).
+    // User sees real data almost instantly instead of 10s of shimmer.
+    await loadUnassigned()
+
+    // Phase 2: Sync from HF in background while user browses existing data.
+    setSyncing(true)
     try {
       const res = await fetch('/api/hf-sync', { method: 'POST' })
       if (res.status === 409) {
@@ -169,10 +173,8 @@ export function SyncAndAssign({
         return
       }
       setSyncMessage(data?.message || 'Sync complete.')
-      // Pull the freshly-synced rows for the picker to render.
-      await loadUnassigned()
-      // Keep the Assigned/Wastage tables fresh too — wrapped in a transition
-      // so the Sync button stays disabled until the refresh completes.
+      setSelectedIds(new Set())
+      await loadUnassigned(true)
       startTransition(() => {
         router.refresh()
       })
@@ -222,10 +224,7 @@ export function SyncAndAssign({
     })
   }
 
-  // The available account labels for the filter chips
-  const availableAccounts = Array.from(
-    new Set(unassigned.map((g) => g.hf_connection_label).filter(Boolean)),
-  ) as string[]
+  const availableAccounts = accountLabels
 
   function openDestination() {
     if (selectedIds.size === 0) return
@@ -552,19 +551,12 @@ export function SyncAndAssign({
                     </Button>
                   </div>
                 </div>
-              ) : syncing || loadingUnassigned ? (
+              ) : loadingUnassigned ? (
                 <>
-                  {/* Inline status banner so the user sees we're working. */}
                   <div className="px-4 py-2 border-b border-neutral-800 bg-neutral-900/40 flex items-center gap-2">
                     <RefreshCw className="size-3.5 text-lime-400 animate-spin" />
-                    <span className="text-xs text-neutral-400">
-                      {syncing
-                        ? 'Pulling fresh generations from Higgsfield…'
-                        : 'Loading…'}
-                    </span>
+                    <span className="text-xs text-neutral-400">Loading…</span>
                   </div>
-                  {/* Shimmer rows — same column shape as a real row so the
-                      layout doesn't jump when real data lands. */}
                   <ul className="divide-y divide-neutral-800">
                     {Array.from({ length: 6 }).map((_, i) => (
                       <li
@@ -584,18 +576,38 @@ export function SyncAndAssign({
                 </>
               ) : visibleUnassigned.length === 0 ? (
                 <div className="p-8 text-center text-neutral-500 text-sm">
-                  <p>
-                    {syncMessage
-                      ? "Synced — but nothing new is waiting."
-                      : 'No unassigned generations.'}
-                  </p>
-                  <p className="text-xs mt-1">
-                    {accountFilter
-                      ? 'Try clearing the account filter or sync again.'
-                      : 'Click Sync again later for new entries.'}
-                  </p>
+                  {syncing ? (
+                    <div className="flex items-center justify-center gap-2">
+                      <RefreshCw className="size-3.5 text-lime-400 animate-spin" />
+                      <span className="text-xs text-neutral-400">
+                        Pulling fresh generations from Higgsfield…
+                      </span>
+                    </div>
+                  ) : (
+                    <>
+                      <p>
+                        {syncMessage
+                          ? "Synced — but nothing new is waiting."
+                          : 'No unassigned generations.'}
+                      </p>
+                      <p className="text-xs mt-1">
+                        {accountFilter
+                          ? 'Try clearing the account filter or sync again.'
+                          : 'Click Sync again later for new entries.'}
+                      </p>
+                    </>
+                  )}
                 </div>
               ) : (
+                <>
+                {syncing && (
+                  <div className="px-4 py-1.5 border-b border-neutral-800 bg-neutral-900/40 flex items-center gap-2">
+                    <RefreshCw className="size-3 text-lime-400 animate-spin" />
+                    <span className="text-[11px] text-neutral-400">
+                      Syncing from Higgsfield — new items will appear shortly…
+                    </span>
+                  </div>
+                )}
                 <table className="w-full text-xs">
                   <tbody className="divide-y divide-neutral-800">
                     {pPag.slice.map((g) => {
@@ -661,9 +673,10 @@ export function SyncAndAssign({
                     })}
                   </tbody>
                 </table>
+                </>
               )}
               </div>
-              {!syncError && !syncing && !loadingUnassigned && visibleUnassigned.length > 0 && (
+              {!syncError && !loadingUnassigned && visibleUnassigned.length > 0 && (
                 <PaginationButtons page={pPag.page} totalPages={pPag.totalPages} total={pPag.total} onPageChange={setPickerPage} />
               )}
             </div>

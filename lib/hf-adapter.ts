@@ -80,26 +80,30 @@ function detectMediaType(url: string): 'image' | 'video' {
 export async function fetchHFGenerations(
   accessToken: string
 ): Promise<Generation[]> {
-  // Jobs (one page of up to 100 recent).
-  const jobsRes = await hfGet<{ items: HFJob[] }>(
-    '/agents/jobs?size=100',
-    accessToken
-  )
+  // Jobs + first transaction page in parallel — saves one full round-trip.
+  const [jobsRes, tx1Res] = await Promise.all([
+    hfGet<{ items: HFJob[] }>('/agents/jobs?size=100', accessToken),
+    hfGet<{ items: HFTransaction[]; next_cursor?: number }>(
+      '/agents/transactions?size=100&cursor=0',
+      accessToken
+    ),
+  ])
   const jobs = jobsRes.items || []
 
-  // Transactions — paginate (cursor) up to 5 pages so credit matching has
-  // enough history for the jobs above.
-  const allTx: HFTransaction[] = []
-  let cursor = 0
-  for (let page = 0; page < 5; page++) {
-    const txRes = await hfGet<{ items: HFTransaction[]; next_cursor?: number }>(
-      `/agents/transactions?size=100&cursor=${cursor}`,
-      accessToken
-    )
-    const items = txRes.items || []
-    allTx.push(...items)
-    if (items.length < 100 || txRes.next_cursor == null) break
-    cursor = txRes.next_cursor
+  // Continue paginating transactions if the first page was full.
+  const allTx: HFTransaction[] = [...(tx1Res.items || [])]
+  if ((tx1Res.items || []).length >= 100 && tx1Res.next_cursor != null) {
+    let cursor = tx1Res.next_cursor
+    for (let page = 1; page < 5; page++) {
+      const txRes = await hfGet<{ items: HFTransaction[]; next_cursor?: number }>(
+        `/agents/transactions?size=100&cursor=${cursor}`,
+        accessToken
+      )
+      const items = txRes.items || []
+      allTx.push(...items)
+      if (items.length < 100 || txRes.next_cursor == null) break
+      cursor = txRes.next_cursor
+    }
   }
   const spendTransactions = allTx.filter((t) => t.action === 'spend')
 

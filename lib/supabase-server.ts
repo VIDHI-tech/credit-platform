@@ -16,7 +16,7 @@ const fetchWithRetry: typeof fetch = async (input, init) => {
       return await fetch(input, init)
     } catch (error) {
       lastError = error
-      await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)))
+      await new Promise((resolve) => setTimeout(resolve, 150 * (attempt + 1)))
     }
   }
   throw lastError

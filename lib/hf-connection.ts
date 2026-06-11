@@ -111,25 +111,20 @@ export async function forEachAccessibleConnection<T>(
   const conns = await listAccessibleConnections(supabase, orgId, userId, role)
   if (conns.length === 0) throw new NoHFConnectionError()
 
-  const out: ConnectionResult<T>[] = []
-  for (const c of conns) {
-    try {
-      const data = await callWithRefresh(supabase, c, fn)
-      out.push({
-        connectionId: c.id,
-        label: c.label,
-        hf_email: c.hf_email,
-        data,
-      })
-    } catch (err) {
-      out.push({
-        connectionId: c.id,
-        label: c.label,
-        hf_email: c.hf_email,
-        data: null,
-        error: err instanceof Error ? err.message : String(err),
-      })
-    }
-  }
-  return out
+  return Promise.all(
+    conns.map(async (c): Promise<ConnectionResult<T>> => {
+      try {
+        const data = await callWithRefresh(supabase, c, fn)
+        return { connectionId: c.id, label: c.label, hf_email: c.hf_email, data }
+      } catch (err) {
+        return {
+          connectionId: c.id,
+          label: c.label,
+          hf_email: c.hf_email,
+          data: null,
+          error: err instanceof Error ? err.message : String(err),
+        }
+      }
+    })
+  )
 }

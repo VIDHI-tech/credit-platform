@@ -42,6 +42,8 @@ interface Props {
   workTitles: Record<string, string>
   userRole: 'master' | 'manager' | 'creator'
   userId: string
+  /** All connected HF account labels (from hf_connections). */
+  accountLabels: string[]
 }
 
 export function ClientGenerationsTables({
@@ -50,12 +52,21 @@ export function ClientGenerationsTables({
   workTitles,
   userRole,
   userId,
+  accountLabels,
 }: Props) {
   const router = useRouter()
   const [error, setError] = useState<string | null>(null)
+  const [accountFilter, setAccountFilter] = useState<string | null>(null)
 
-  const assigned = generations.filter((g) => !g.is_waste)
-  const wasted = generations.filter((g) => g.is_waste)
+  const allAssigned = generations.filter((g) => !g.is_waste)
+  const allWasted = generations.filter((g) => g.is_waste)
+
+  const assigned = accountFilter
+    ? allAssigned.filter((g) => g.hf_connection_label === accountFilter)
+    : allAssigned
+  const wasted = accountFilter
+    ? allWasted.filter((g) => g.hf_connection_label === accountFilter)
+    : allWasted
 
   const [assignedPage, setAssignedPage] = useState(1)
   const [wastedPage, setWastedPage] = useState(1)
@@ -74,6 +85,39 @@ export function ClientGenerationsTables({
           >
             dismiss
           </button>
+        </div>
+      )}
+
+      {accountLabels.length > 1 && (
+        <div className="flex flex-wrap gap-1.5 items-center">
+          <span className="text-[10px] text-neutral-500 uppercase tracking-wider mr-1">
+            Account:
+          </span>
+          <button
+            type="button"
+            onClick={() => { setAccountFilter(null); setAssignedPage(1); setWastedPage(1) }}
+            className={`text-xs px-2 py-0.5 rounded transition-colors ${
+              accountFilter === null
+                ? 'bg-lime-400 text-black'
+                : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'
+            }`}
+          >
+            All
+          </button>
+          {accountLabels.map((label) => (
+            <button
+              key={label}
+              type="button"
+              onClick={() => { setAccountFilter(label); setAssignedPage(1); setWastedPage(1) }}
+              className={`text-xs px-2 py-0.5 rounded transition-colors ${
+                accountFilter === label
+                  ? 'bg-lime-400 text-black'
+                  : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
         </div>
       )}
 
