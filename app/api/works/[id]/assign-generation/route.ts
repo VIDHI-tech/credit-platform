@@ -6,6 +6,7 @@
 // from a single work-detail flow.
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
+import { logActivity } from '@/lib/activity-log'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -31,7 +32,7 @@ export async function POST(
 
     const { data: work } = await supabase
       .from('works')
-      .select('id, client_id, creator_id, org_id')
+      .select('id, client_id, creator_id, org_id, title')
       .eq('id', workId)
       .maybeSingle()
     if (!work) {
@@ -40,7 +41,7 @@ export async function POST(
 
     const { data: membership } = await supabase
       .from('memberships')
-      .select('role')
+      .select('role, full_name')
       .eq('user_id', user.id)
       .eq('org_id', work.org_id)
       .eq('status', 'active')
@@ -90,6 +91,25 @@ export async function POST(
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 })
     }
+
+    // Fetch generation details for the log label
+    const { data: gen } = await supabase
+      .from('generations')
+      .select('display_name, credits')
+      .eq('id', generationId)
+      .maybeSingle()
+    const genLabel = gen ? `${gen.display_name} (${parseFloat(gen.credits || '0').toFixed(2)} cr)` : generationId
+
+    logActivity(supabase, {
+      orgId: work.org_id,
+      entityType: 'work',
+      entityId: effectiveWorkId ?? workId,
+      action: 'assigned',
+      fromValue: null,
+      toValue: genLabel,
+      actorName: membership?.full_name ?? 'Unknown',
+    })
+
     return NextResponse.json({ success: true })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Assign failed'

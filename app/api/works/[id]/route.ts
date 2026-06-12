@@ -1,6 +1,7 @@
 // app/api/works/[id]/route.ts — edit + delete a work.
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
+import { logActivity } from '@/lib/activity-log'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -128,6 +129,10 @@ export async function PATCH(
       }
     }
 
+    // Log the edit (non-blocking)
+    const { data: mem } = await supabase.from('memberships').select('full_name').eq('user_id', user.id).eq('org_id', work.org_id).maybeSingle()
+    logActivity(supabase, { orgId: work.org_id, entityType: 'work', entityId: id, action: 'edited', fromValue: null, toValue: null, actorName: mem?.full_name ?? 'Unknown' })
+
     return NextResponse.json({ success: true })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Update failed'
@@ -135,7 +140,7 @@ export async function PATCH(
   }
 }
 
-/** DELETE — delete a work (master only). Generations' work_id → null via FK cascade. */
+/** DELETE — archive a work (master only). */
 export async function DELETE(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -167,23 +172,21 @@ export async function DELETE(
       .eq('org_id', work.org_id)
       .eq('status', 'active')
       .maybeSingle()
-    if (!membership || membership.role !== 'master') {
-      return NextResponse.json({ error: 'Only master can delete works' }, { status: 403 })
+    if (!membership || (membership.role !== 'master' && membership.role !== 'manager')) {
+      return NextResponse.json({ error: 'Only master/manager can delete works' }, { status: 403 })
     }
-
-    // Unassign generations from this work first
-    await supabase
-      .from('generations')
-      .update({ work_id: null })
-      .eq('work_id', id)
 
     const { error } = await supabase
       .from('works')
-      .delete()
+      .update({ deleted_at: new Date().toISOString() })
       .eq('id', id)
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 })
     }
+
+    const { data: mem } = await supabase.from('memberships').select('full_name').eq('user_id', user.id).eq('org_id', work.org_id).maybeSingle()
+    logActivity(supabase, { orgId: work.org_id, entityType: 'work', entityId: id, action: 'archived', fromValue: null, toValue: null, actorName: mem?.full_name ?? 'Unknown' })
+
     return NextResponse.json({ success: true })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Delete failed'

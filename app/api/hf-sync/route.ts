@@ -13,8 +13,11 @@ import { createClient } from '@/lib/supabase-server'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-export async function POST() {
+export async function POST(req: Request) {
   try {
+    const body = await req.json().catch(() => ({}))
+    const connectionId: string | undefined = body.connectionId || undefined
+
     const supabase = await createClient()
     const {
       data: { user },
@@ -38,14 +41,13 @@ export async function POST() {
     }
     const role = membership.role as 'master' | 'manager' | 'creator'
 
-    // Pull generations from every accessible connection, stamping each batch
-    // with its source connection_id.
     const results = await forEachAccessibleConnection<Generation[]>(
       supabase,
       membership.org_id,
       user.id,
       role,
-      (token) => fetchHFGenerations(token)
+      (token) => fetchHFGenerations(token),
+      connectionId
     )
 
     const rows = results.flatMap((r) =>

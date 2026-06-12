@@ -34,7 +34,7 @@ export const ACCESS = {
   // ── CLIENTS ───────────────────────────────────────────────────────────────
   clients: {
     master:  { view: true,  create: true,  edit: true,  delete: true  },
-    manager: { view: true,  create: true,  edit: true,  delete: false },
+    manager: { view: true,  create: true,  edit: true,  delete: true  },
     creator: { view: true,  create: false, edit: false, delete: false },
   },
 
@@ -48,7 +48,7 @@ export const ACCESS = {
   // ── WORKS ─────────────────────────────────────────────────────────────────
   works: {
     master:  { view: true,  create: true,  edit: true,  delete: true  },
-    manager: { view: true,  create: true,  edit: true,  delete: false },
+    manager: { view: true,  create: true,  edit: true,  delete: true  },
     creator: { view: true,  create: false, edit: false, delete: false },
     //        ^^ creator view is scoped to their own works via RLS
   },

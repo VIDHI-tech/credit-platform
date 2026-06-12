@@ -8,6 +8,7 @@
 // own assignment or their own waste action, whichever is more recent.
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
+import { logActivity } from '@/lib/activity-log'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -32,7 +33,7 @@ export async function POST(
     const { data: gen } = await supabase
       .from('generations')
       .select(
-        'id, assigned_by, assigned_at, wasted_by, wasted_at, is_waste, org_id',
+        'id, assigned_by, assigned_at, wasted_by, wasted_at, is_waste, org_id, work_id, display_name, credits',
       )
       .eq('id', generationId)
       .maybeSingle()
@@ -42,7 +43,7 @@ export async function POST(
 
     const { data: membership } = await supabase
       .from('memberships')
-      .select('role, org_id')
+      .select('role, org_id, full_name')
       .eq('user_id', user.id)
       .eq('status', 'active')
       .maybeSingle()
@@ -92,6 +93,20 @@ export async function POST(
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 })
     }
+
+    if (gen?.work_id && membership) {
+      const genLabel = `${gen.display_name} (${parseFloat(gen.credits || '0').toFixed(2)} cr)`
+      logActivity(supabase, {
+        orgId: membership.org_id,
+        entityType: 'work',
+        entityId: gen.work_id,
+        action: 'unassigned',
+        fromValue: genLabel,
+        toValue: null,
+        actorName: membership.full_name ?? 'Unknown',
+      })
+    }
+
     return NextResponse.json({ success: true })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unassign failed'

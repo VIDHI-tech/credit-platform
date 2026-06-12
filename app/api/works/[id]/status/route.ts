@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import type { WorkStatus } from '@/lib/work-helpers'
+import { logActivity } from '@/lib/activity-log'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -132,6 +133,22 @@ export async function PATCH(
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 })
     }
+
+    const { data: mem } = await supabase
+      .from('memberships')
+      .select('full_name')
+      .eq('user_id', user.id)
+      .eq('org_id', work.org_id)
+      .maybeSingle()
+    logActivity(supabase, {
+      orgId: work.org_id,
+      entityType: 'work',
+      entityId: id,
+      action: 'status_changed',
+      fromValue: currentStatus,
+      toValue: to,
+      actorName: mem?.full_name ?? 'Unknown',
+    })
 
     return NextResponse.json({ success: true, status: to })
   } catch (err) {

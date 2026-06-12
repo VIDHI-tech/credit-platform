@@ -1,6 +1,7 @@
 // app/api/generations/[id]/waste/route.ts — mark/unmark a generation as waste.
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
+import { logActivity } from '@/lib/activity-log'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -28,7 +29,7 @@ export async function POST(
     //   - creator (other)   : never
     const { data: membership } = await supabase
       .from('memberships')
-      .select('role')
+      .select('role, org_id, full_name')
       .eq('user_id', user.id)
       .eq('status', 'active')
       .maybeSingle()
@@ -36,13 +37,16 @@ export async function POST(
       return NextResponse.json({ error: 'Not a member' }, { status: 403 })
     }
 
+    // Fetch generation for permission check and logging
+    const { data: genFull } = await supabase
+      .from('generations')
+      .select('wasted_by, wasted_at, work_id, display_name, credits')
+      .eq('id', generationId)
+      .maybeSingle()
+
     if (!is_waste && membership.role === 'creator') {
       // Creator un-waste: must be the waster AND within the 60s window.
-      const { data: gen } = await supabase
-        .from('generations')
-        .select('wasted_by, wasted_at')
-        .eq('id', generationId)
-        .maybeSingle()
+      const gen = genFull
       if (!gen) {
         return NextResponse.json(
           { error: 'Generation not found' },
@@ -86,6 +90,27 @@ export async function POST(
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 })
     }
+
+    if (genFull?.work_id) {
+      const genLabel = `${genFull.display_name} (${parseFloat(genFull.credits || '0').toFixed(2)} cr)`
+      // Detect rework+wastage: fetch work status to label it correctly
+      let action: 'wastage' | 'unwastage' = is_waste ? 'wastage' : 'unwastage'
+      let toValue: string | null = null
+      if (is_waste) {
+        const { data: work } = await supabase.from('works').select('status').eq('id', genFull.work_id).maybeSingle()
+        toValue = work?.status === 'rework' ? 'rework wastage' : 'wastage'
+      }
+      logActivity(supabase, {
+        orgId: membership.org_id,
+        entityType: 'work',
+        entityId: genFull.work_id,
+        action,
+        fromValue: genLabel,
+        toValue,
+        actorName: membership.full_name ?? 'Unknown',
+      })
+    }
+
     return NextResponse.json({ success: true })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Waste toggle failed'
