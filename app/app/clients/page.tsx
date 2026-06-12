@@ -81,6 +81,7 @@ export default async function ClientsPage({ searchParams }: PageProps) {
 
   const sorted = sortClientsByStatus(visibleClients)
   const canCreate = can(membership.role, 'clients', 'create')
+  const canCreateWork = can(membership.role, 'works', 'create')
   const showSections = !filterStatus || filterStatus === 'all'
   const canSetupRd = ['master', 'manager'].includes(membership.role) && !rdClient
 
@@ -126,7 +127,7 @@ export default async function ClientsPage({ searchParams }: PageProps) {
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {inStatus.map((c) => (
-                    <ClientCard key={c.id} client={c} />
+                    <ClientCard key={c.id} client={c} canCreateWork={canCreateWork} />
                   ))}
                 </div>
               </section>
@@ -136,7 +137,7 @@ export default async function ClientsPage({ searchParams }: PageProps) {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {sorted.map((c) => (
-            <ClientCard key={c.id} client={c} />
+            <ClientCard key={c.id} client={c} canCreateWork={canCreateWork} />
           ))}
         </div>
       )}

@@ -94,14 +94,14 @@ export const ACCESS = {
   // ── REPORTS ───────────────────────────────────────────────────────────────
   reports: {
     master:  { view: true,  create: false, edit: false, delete: false },
-    manager: { view: true,  create: false, edit: false, delete: false },
+    manager: { view: false, create: false, edit: false, delete: false },
     creator: { view: false, create: false, edit: false, delete: false },
   },
 
   // reports CSV export
   reports_export: {
     master:  { view: true,  create: true,  edit: false, delete: false },
-    manager: { view: true,  create: true,  edit: false, delete: false },
+    manager: { view: false, create: false, edit: false, delete: false },
     creator: { view: false, create: false, edit: false, delete: false },
   },
 
